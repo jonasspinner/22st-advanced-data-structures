@@ -30,6 +30,7 @@ FetchContent_MakeAvailable(googletest benchmark)
 
 add_executable(ads_program_a src/main.cpp)
 
+add_executable(generate_bv_data app/generate_bv_data.cpp)
 
 ## Tests
 
@@ -51,5 +52,8 @@ gtest_discover_tests(utils_test)
 
 ## Benchmarks
 
-add_executable(utils_benchmarks benchmarks/utils_benchmark.cpp)
-target_link_libraries(utils_benchmarks benchmark::benchmark)
+add_executable(utils_benchmark benchmarks/utils_benchmark.cpp)
+target_link_libraries(utils_benchmark benchmark::benchmark)
+
+add_executable(bv_benchmark benchmarks/bv_benchmark.cpp)
+target_link_libraries(bv_benchmark benchmark::benchmark)

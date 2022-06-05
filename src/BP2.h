@@ -67,6 +67,7 @@ namespace ads {
             [[nodiscard]] constexpr size_type capacity() const { return m_bits.size() * block_width; }
 
             [[nodiscard]] bool access(size_type i) const {
+                assert(i >= 0);
                 assert(i < size());
                 size_type j = i / block_width;
                 size_type k = i % block_width;
@@ -84,11 +85,12 @@ namespace ads {
             }
 
             [[nodiscard]] size_type rank1(size_type i) const {
+                assert(0 <= i);
                 assert(i <= size());
                 size_type j = i / block_width;
                 size_type rank = 0;
                 // Sum up number of ones in all blocks before block `j`.
-                for (size_t block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
+                for (size_type block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
                     rank += std::popcount(m_bits[block_idx]);
                     i -= block_width;
                 }
@@ -187,8 +189,8 @@ namespace ads {
              */
             [[nodiscard]] std::pair<bool, bool> insert(size_type i, bool b) {
                 // TODO: update total and min excess
-                if (i == capacity()) return {true, b};
                 assert(i <= size());
+                if (i == capacity()) return {true, b};
                 assert(i < capacity());
                 size_type j = i / block_width;
                 size_type k = i % block_width;
@@ -218,6 +220,55 @@ namespace ads {
                 assert(size() < capacity());
                 m_size++;
                 return {false, false};
+            }
+
+            [[nodiscard]] std::pair<size_type, size_type> forward_search(size_type i, size_type d) const {
+                // NOTE: different definition than slides
+                //       forward_search(i, d) = min {j > i : excess(j+1) - excess(i) = d }
+                assert(-1 <= i && i < size());
+                if (i == -1 && d == 0) return {i, 0};
+
+                auto excess_i = i >= 0 ? i - 2 * rank1(i) : 0;
+                assert(i < 0 || excess_i == i - 2 * rank1(i));
+
+                size_type j = i;
+                auto excess_jp1 = excess_i + (i >= 0 ? (access(j) ? -1 : 1) : 0);
+                assert(excess_jp1 == (j+1) - 2 * rank1(j+1));
+
+                ++j;
+                // TODO: make more efficient
+                for (; j < size(); ++j) {
+                    excess_jp1 += access(j) ? -1 : 1;
+                    assert(excess_jp1 == (j+1) - 2 * rank1(j+1));
+                    if (excess_jp1 - excess_i == d) {
+                        return {j, 0};
+                    }
+                }
+                return {j, - (excess_jp1 - excess_i - d)};
+            }
+
+            [[nodiscard]] std::pair<size_type, size_type> backward_search(size_type i, size_type d) const {
+                // NOTE: different definition than slides
+                //       forward_search(i, d) = min {j < i : excess(i+1) - excess(j) = d }
+                assert(0 <= i && i <= size());
+                if (i == size() && d == 0) return {i, 0};
+
+                auto excess_ip1 = i < size() ? (i+1) - 2 * rank1(i+1) : (i) - 2 * rank1(i);
+
+                size_type j = i;
+                auto excess_j = excess_ip1 - (i < size() ? (access(j) ? -1 : 1) : 0);
+                assert(excess_j == j - 2 * rank1(j));
+
+                --j;
+                // TODO: make more efficient
+                for (; j >= 0; --j) {
+                    excess_j -= access(j) ? -1 : 1;
+                    assert(excess_j == j - 2 * rank1(j));
+                    if (excess_ip1 - excess_j  == d) {
+                        return {j, 0};
+                    }
+                }
+                return {j, - (excess_ip1 - excess_j - d)};
             }
 
             friend std::ostream &operator<<(std::ostream &os, const Leaf &leaf) {

@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cassert>
+#include <iostream>
 #include <vector>
 
 namespace ads {

@@ -78,7 +78,7 @@ namespace ads {
                 size_type j = i / block_width;
                 size_type rank = 0;
                 // Sum up number of ones in all blocks before block `j`.
-                for (size_t block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
+                for (size_type block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
                     rank += std::popcount(m_bits[block_idx]);
                     i -= block_width;
                 }
@@ -173,8 +173,8 @@ namespace ads {
              * @return {overflow, high_bit} Whether or not the leaf was previously full and if yes, the high bit that has been pushed out.
              */
             [[nodiscard]] std::pair<bool, bool> insert(size_type i, bool b) {
-                if (i == capacity()) return {true, b};
                 assert(i <= size());
+                if (i == capacity()) return {true, b};
                 assert(i < capacity());
                 size_type j = i / block_width;
                 size_type k = i % block_width;
