@@ -15,7 +15,7 @@
 
 
 namespace ads {
-    template<class BlockType = uint64_t, size_t NumBlocks = 8>
+    template<class BlockType = uint64_t, size_t NumBlocks = 64>
     class BP2 {
         static_assert(std::is_unsigned_v<BlockType>);
     public:
@@ -23,15 +23,38 @@ namespace ads {
         using height_type = int32_t;
         constexpr static bool open = false;
         constexpr static bool close = true;
+        constexpr static size_type right_end = std::numeric_limits<size_type>::max();
+        constexpr static size_type left_end = std::numeric_limits<size_type>::min();
     public:
         struct Inner;
         struct Leaf;
 
-        using NodePtr = TaggedPointer<Inner, Leaf>;
+        class NodeHandle {
+            explicit NodeHandle(TaggedPointer<Inner, Leaf> ptr) : m_ptr(ptr) {}
+
+        public:
+            static auto new_leaf() { return leaf(new Leaf); }
+
+            static auto inner(Inner *ptr) { return NodeHandle(TaggedPointer<Inner, Leaf>::first(ptr)); }
+
+            static auto leaf(Leaf *ptr) { return NodeHandle(TaggedPointer<Inner, Leaf>::second(ptr)); }
+
+            std::pair<Inner *, Leaf *> cast() { return m_ptr.cast(); }
+
+            std::pair<const Inner *, const Leaf *> cast() const { return m_ptr.cast(); }
+
+            [[nodiscard]] size_type height() const {
+                auto [inner, leaf] = m_ptr.cast();
+                return inner ? inner->height : 0;
+            }
+
+        private:
+            TaggedPointer<Inner, Leaf> m_ptr;
+        };
 
         struct Inner {
-            NodePtr left;
-            NodePtr right;
+            NodeHandle left;
+            NodeHandle right;
             size_type left_size{};
             size_type left_ones{};
             size_type total_excess{};
@@ -67,7 +90,7 @@ namespace ads {
             [[nodiscard]] constexpr size_type capacity() const { return m_bits.size() * block_width; }
 
             [[nodiscard]] bool access(size_type i) const {
-                assert(i >= 0);
+                assert(0 <= i);
                 assert(i < size());
                 size_type j = i / block_width;
                 size_type k = i % block_width;
@@ -215,10 +238,12 @@ namespace ads {
                 }
 
                 if (size() == capacity()) {
+                    std::tie(total_excess, min_excess) = calculate_excess_info();
                     return {true, highest_bit_is_set};
                 }
                 assert(size() < capacity());
                 m_size++;
+                std::tie(total_excess, min_excess) = calculate_excess_info();
                 return {false, false};
             }
 
@@ -233,18 +258,18 @@ namespace ads {
 
                 size_type j = i;
                 auto excess_jp1 = excess_i + (i >= 0 ? (access(j) ? -1 : 1) : 0);
-                assert(excess_jp1 == (j+1) - 2 * rank1(j+1));
+                assert(excess_jp1 == (j + 1) - 2 * rank1(j + 1));
 
                 ++j;
                 // TODO: make more efficient
                 for (; j < size(); ++j) {
                     excess_jp1 += access(j) ? -1 : 1;
-                    assert(excess_jp1 == (j+1) - 2 * rank1(j+1));
+                    assert(excess_jp1 == (j + 1) - 2 * rank1(j + 1));
                     if (excess_jp1 - excess_i == d) {
                         return {j, 0};
                     }
                 }
-                return {j, - (excess_jp1 - excess_i - d)};
+                return {j, -(excess_jp1 - excess_i - d)};
             }
 
             [[nodiscard]] std::pair<size_type, size_type> backward_search(size_type i, size_type d) const {
@@ -253,7 +278,7 @@ namespace ads {
                 assert(0 <= i && i <= size());
                 if (i == size() && d == 0) return {i, 0};
 
-                auto excess_ip1 = i < size() ? (i+1) - 2 * rank1(i+1) : (i) - 2 * rank1(i);
+                auto excess_ip1 = i < size() ? (i + 1) - 2 * rank1(i + 1) : (i) - 2 * rank1(i);
 
                 size_type j = i;
                 auto excess_j = excess_ip1 - (i < size() ? (access(j) ? -1 : 1) : 0);
@@ -264,11 +289,11 @@ namespace ads {
                 for (; j >= 0; --j) {
                     excess_j -= access(j) ? -1 : 1;
                     assert(excess_j == j - 2 * rank1(j));
-                    if (excess_ip1 - excess_j  == d) {
+                    if (excess_ip1 - excess_j == d) {
                         return {j, 0};
                     }
                 }
-                return {j, - (excess_ip1 - excess_j - d)};
+                return {j, -(excess_ip1 - excess_j - d)};
             }
 
             friend std::ostream &operator<<(std::ostream &os, const Leaf &leaf) {
@@ -302,7 +327,7 @@ namespace ads {
             [[nodiscard]] size_type calculate_min_excess() const {
                 // TODO: make more efficient
                 size_type excess = 0;
-                size_type current_min_excess = std::numeric_limits<size_type>::max();
+                size_type current_min_excess = 0;
                 for (size_type i = 0; i < size(); ++i) {
                     if (access(i)) {
                         excess--;
@@ -313,9 +338,57 @@ namespace ads {
                 }
                 return current_min_excess;
             }
+
+            [[nodiscard]] std::pair<size_type, size_type> calculate_excess_info() const {
+                size_type excess = 0;
+                size_type current_min_excess = 0;
+
+                auto update_for_block = [&](block_type block, size_type num_bits = block_width) {
+                    for (size_type k = 0; k < num_bits; ++k, block >>= 1) {
+                        if (block & bit_mask(0)) {
+                            excess--;
+                            current_min_excess = std::min(current_min_excess, excess);
+                        } else {
+                            excess++;
+                        }
+                    }
+                };
+
+                size_type last_block_idx = (size() - 1) / block_width;
+
+                // first block
+                update_for_block(m_bits[0], std::min(size(), block_width));
+
+                for (size_type j = 1; j < last_block_idx; ++j) {
+                    size_type block_ones = std::popcount(m_bits[j]);
+                    // check if the worst case (block_ones 1s followed by (block_width - block_ones) zeros) would not
+                    // result in an update to the min excess.
+                    if (excess - block_ones >= current_min_excess) {
+                        excess += block_width - 2 * block_ones;
+                    } else {
+                        update_for_block(m_bits[j]);
+                    }
+                }
+                if (last_block_idx > 0) {
+                    // last block
+                    size_type block_num_bits = size() - last_block_idx * block_width;
+                    assert(1 <= block_num_bits && block_num_bits <= block_width);
+                    size_type block_ones = std::popcount(m_bits[last_block_idx]);
+                    if (excess - block_ones >= current_min_excess) {
+                        excess += block_num_bits - 2 * block_ones;
+                    } else {
+                        update_for_block(m_bits[last_block_idx], block_num_bits);
+                    }
+                }
+
+
+                assert(excess == size() - 2 * rank1(size()));
+                assert(current_min_excess == calculate_min_excess());
+                return {excess, current_min_excess};
+            }
         };
 
-        static bool access(NodePtr node, size_type i) {
+        static bool access(const NodeHandle &node, size_type i) {
             // Dispatch dependent on node type.
             auto [inner, leaf] = node.cast();
             return inner ? access(*inner, i) : leaf->access(i);
@@ -326,8 +399,9 @@ namespace ads {
             return i < inner.left_size ? access(inner.left, i) : access(inner.right, i - inner.left_size);
         }
 
-        static void flip(NodePtr node, size_type i) {
+        static void flip(NodeHandle node, size_type i) {
             // TODO: update total and min excess
+            assert(false);
             // Dispatch dependent on node type.
             auto [inner, leaf] = node.cast();
             inner ? flip(*inner, i) : leaf->flip(i);
@@ -335,11 +409,12 @@ namespace ads {
 
         static void flip(Inner &inner, size_type i) {
             // TODO: update total and min excess
+            assert(false);
             // If index i is the left subtree, go there, otherwise adjust i and go to the right subtree.
             i < inner.left_size ? flip(inner.left, i) : flip(inner.right, i - inner.left_size);
         }
 
-        static void rank1(NodePtr node, size_type i, size_type &rank) {
+        static void rank1(const NodeHandle &node, size_type i, size_type &rank) {
             // Dispatch dependent on node type.
             // Update rank via reference to allow for tail call optimization
             auto [inner, leaf] = node.cast();
@@ -358,7 +433,7 @@ namespace ads {
             return rank1(inner.right, i - inner.left_size, rank);
         }
 
-        static void select1(const NodePtr node, size_type i, size_type &result) {
+        static void select1(const NodeHandle &node, size_type i, size_type &result) {
             assert(i > 0);
             // Dispatch dependent on node type.
             // Update rank via reference to allow for tail call optimization
@@ -378,7 +453,7 @@ namespace ads {
             return select1(inner.right, i - inner.left_ones, result);
         }
 
-        static void select0(const NodePtr node, size_type i, size_type &result) {
+        static void select0(const NodeHandle &node, size_type i, size_type &result) {
             assert(i > 0);
             auto [inner, leaf] = node.cast();
             if (inner) {
@@ -393,6 +468,82 @@ namespace ads {
             if (i <= num_zeros_on_left) return select0(inner.left, i, result);
             result += inner.left_size;
             return select0(inner.right, i - num_zeros_on_left, result);
+        }
+
+        static std::pair<size_type, size_type> forward_search(const NodeHandle node, size_type i, size_type d) {
+            auto [inner, leaf] = node.cast();
+            if (inner) {
+                auto left_size = inner->left_size;
+
+                if (i < left_size) {
+                    // descend left
+                    auto [idx, d_prime] = forward_search(inner->left, i, d);
+                    if (idx == right_end) {
+                        if (d_prime >= min_excess(inner->right)) {
+                            // descend right
+                            auto [idx_r, d_prime_r] = forward_search(inner->right, left_end, d_prime);
+                            assert(idx_r != right_end);
+                            idx_r += left_size;
+                            return {idx_r, d_prime_r};
+                        }
+                        // ascend
+                        d_prime -= total_excess(inner->right);
+                        return {idx, d_prime};
+                    }
+                    return {idx, d_prime};
+                } else {
+                    // descend right
+                    auto [idx, d_prime] = forward_search(inner->right, i - left_size, d);
+                    if (idx == right_end) {
+                        return {idx, d_prime};
+                    }
+                    idx += left_size;
+                    return {idx, d_prime};
+                }
+            } else {
+                if (i == left_end) { i = -1; }
+                auto [idx, d_prime] = leaf->forward_search(i, d);
+                if (idx == leaf->m_size) { idx = right_end; }
+                return {idx, d_prime};
+            }
+        }
+
+        static std::pair<size_type, size_type> backward_search(const NodeHandle node, size_type i, size_type d) {
+            auto [inner, leaf] = node.cast();
+            if (inner) {
+                auto left_size = inner->left_size;
+
+                if (i < left_size) {
+                    return backward_search(inner->left, i, d);
+                } else if (i == right_end){
+                    if (total_excess(inner->right) - d >= min_excess(inner->right)) { // TODO: check
+                        auto [idx, d_prime] = backward_search(inner->right, right_end, d);
+                        assert(idx != left_end);
+                        idx += left_size;
+                        return {idx, d_prime};
+                    }
+                    d -= total_excess(inner->left);
+                    return backward_search(inner->left, right_end, d);
+                } else {
+                    auto [idx, d_prime] = backward_search(inner->right, i - left_size, d);
+                    if (idx == left_end) {
+                        if (total_excess(inner->left) - d_prime >= min_excess(inner->left)) { // TODO: check
+                            auto [idx_l, d_prime_l] = backward_search(inner->left, right_end, d_prime);
+                            assert(idx_l != left_end);
+                            return {idx_l, d_prime_l};
+                        }
+                        d_prime -= total_excess(inner->left);
+                        return {idx, d_prime};
+                    }
+                    idx += left_size;
+                    return {idx, d_prime};
+                }
+            } else {
+                if (i == right_end) { i = leaf->size(); }
+                auto [idx, d_prime] = leaf->backward_search(i, d);
+                if (idx == -1) { idx = left_end; }
+                return {idx, d_prime};
+            }
         }
 
         /**
@@ -438,11 +589,11 @@ namespace ads {
             auto min_excess = std::min(left->min_excess, left->total_excess + right->min_excess);
 
             auto *new_inner = new Inner{
-                    NodePtr::second(left), NodePtr::second(right),
+                    NodeHandle::leaf(left), NodeHandle::leaf(right),
                     left_size, left_ones,
                     total_excess, min_excess,
                     1};
-            assert(std::get<0>(check_integrity(NodePtr::first(new_inner))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(new_inner))));
             return new_inner;
         }
 
@@ -453,8 +604,7 @@ namespace ads {
          * @param b
          * @return {root, changed} the (maybe updated) subtree root and whether the subtree height has changed
          */
-        static std::pair<NodePtr, bool> insert(NodePtr node, size_type i, bool b) {
-            // TODO: update total and min excess
+        static std::pair<NodeHandle, bool> insert(NodeHandle node, size_type i, bool b) {
             auto [inner, leaf] = node.cast();
             if (leaf) {
                 assert(i <= leaf->size());
@@ -464,8 +614,11 @@ namespace ads {
                 auto [overflow, high_bit] = leaf->insert(i, b);
                 if (overflow) {
                     // Split leaf if needed
-                    return {NodePtr::first(split(leaf, high_bit)), true};
+                    node = NodeHandle::inner(split(leaf, high_bit));
+                    assert(std::get<0>(check_integrity(node)));
+                    return {node, true};
                 } else {
+                    assert(std::get<0>(check_integrity(node)));
                     return {node, false};
                 }
             } else if (i < inner->left_size) {
@@ -476,12 +629,16 @@ namespace ads {
                 inner->left_size++;
                 inner->left_ones += b;
 
+                update_excess_info_from_children_info(*inner);
+
                 // If the height of the subtree changed, recalculate height and if it changed, balance the tree if needed.
                 if (changed) {
                     auto h = std::max<int>(inner->height, height(inner->left) + 1);
                     if (inner->height != h) {
                         inner->height = h;
-                        return {NodePtr::first(balance(inner)), true};
+                        node = NodeHandle::inner(balance(inner));
+                        assert(std::get<0>(check_integrity(node)));
+                        return {node, true};
                     }
                 }
                 return {node, false};
@@ -491,12 +648,15 @@ namespace ads {
                 bool changed{};
                 std::tie(inner->right, changed) = insert(inner->right, i, b);
 
+                update_excess_info_from_children_info(*inner);
+
                 // If the height of the subtree changed, recalculate height and if it changed, balance the tree if needed.
                 if (changed) {
                     auto h = std::max(inner->height, height(inner->right) + 1);
                     if (inner->height != h) {
                         inner->height = h;
-                        return {NodePtr::first(balance(inner)), true};
+                        assert(std::get<0>(check_integrity(NodeHandle::inner(inner))));
+                        return {NodeHandle::inner(balance(inner)), true};
                     }
                 }
                 return {node, false};
@@ -510,8 +670,7 @@ namespace ads {
          * @param i
          * @return {root, deleted_bit} the (maybe updated) subtree root and the deleted bit
          */
-        static std::pair<NodePtr, bool> remove(NodePtr node, size_type i) {
-            // TODO: update total and min excess
+        static std::pair<NodeHandle, bool> remove(NodeHandle node, size_type i) {
             auto [inner, leaf] = node.cast();
             if (leaf) {
                 // NOTE: This only applies if the whole tree is only one leaf node.
@@ -534,9 +693,11 @@ namespace ads {
                 std::tie(inner->right, deleted_bit) = remove(inner->right, i - inner->left_size);
             }
 
+            update_excess_info_from_children_info(*inner);
+
             // The height might have decreased by one.
             inner->height = std::max(height(inner->left), height(inner->right)) + 1;
-            return {NodePtr::first(balance(inner)), deleted_bit};
+            return {NodeHandle::inner(balance(inner)), deleted_bit};
         }
 
         /**
@@ -545,9 +706,8 @@ namespace ads {
          * @param i
          * @return {root, deleted_bit} the (maybe updated) subtree root and the deleted bit
          */
-        static std::pair<NodePtr, bool> remove_second_level(Inner *a, size_type i) {
-            // TODO: update total and min excess
-            assert(std::get<0>(check_integrity(NodePtr::first(a))));
+        static std::pair<NodeHandle, bool> remove_second_level(Inner *a, size_type i) {
+            assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
             assert(a->height == 2);
 
             // Following cases are distinguished:
@@ -577,9 +737,11 @@ namespace ads {
                     a->left_ones -= deleted_bit;
                     a->height = std::max(height(a->left), height(a->right)) + 1;
 
-                    assert(std::get<0>(check_integrity(NodePtr::first(a))));
+                    update_excess_info_from_children_info(*a);
 
-                    return {NodePtr::first(balance(a)), deleted_bit};
+                    assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                    return {NodeHandle::inner(balance(a)), deleted_bit};
                 } else {
                     // 1.2     and the left child is a leaf
                     assert(b_leaf);
@@ -604,9 +766,11 @@ namespace ads {
                         a->left_ones += moved_bit;
                         a->height = std::max(height(a->left), height(a->right)) + 1;
 
-                        assert(std::get<0>(check_integrity(NodePtr::first(a))));
+                        update_excess_info_from_children_info(*a);
 
-                        return {NodePtr::first(balance(a)), deleted_bit};
+                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                        return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 1.2.2     and the leaf has more than the minimum number of bits.
                         // Strategy: Directly delete bit from the left child.
@@ -616,9 +780,11 @@ namespace ads {
                         a->left_size--;
                         a->left_ones -= deleted_bit;
 
-                        assert(std::get<0>(check_integrity(NodePtr::first(a))));
+                        update_excess_info_from_children_info(*a);
 
-                        return {NodePtr::first(a), deleted_bit};
+                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                        return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
             } else {
@@ -637,9 +803,11 @@ namespace ads {
 
                     a->height = std::max<int>(height(a->left), height(a->right)) + 1;
 
-                    assert(std::get<0>(check_integrity(NodePtr::first(a))));
+                    update_excess_info_from_children_info(*a);
 
-                    return {NodePtr::first(balance(a)), deleted_bit};
+                    assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                    return {NodeHandle::inner(balance(a)), deleted_bit};
                 } else {
                     // 2.2     and the right child is a leaf
 
@@ -665,23 +833,31 @@ namespace ads {
                         a->left_ones -= moved_bit;
                         a->height = std::max(height(a->left), height(a->right)) + 1;
 
-                        assert(std::get<0>(check_integrity(NodePtr::first(a))));
+                        update_excess_info_from_children_info(*a);
 
-                        return {NodePtr::first(balance(a)), deleted_bit};
+                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                        return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 2.2.2     and the leaf has more than the minimum number of bits.
                         // Strategy: Directly delete bit from the right child.
                         assert(b_leaf->size() > Leaf::min_num_bits);
-                        return {NodePtr::first(a), b_leaf->remove(i)};
+                        auto deleted_bit = b_leaf->remove(i);
+
+                        update_excess_info_from_children_info(*a);
+
+                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+
+                        return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
             }
             assert(false);
         }
 
-        static std::pair<NodePtr, bool> remove_first_level(Inner *a, size_type i) {
+        static std::pair<NodeHandle, bool> remove_first_level(Inner *a, size_type i) {
             // TODO: update total and min excess
-            assert(std::get<0>(check_integrity(NodePtr::first(a))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
             assert(a->height == 1);
             //   a
             // b   c
@@ -713,7 +889,7 @@ namespace ads {
 
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
-                        return {NodePtr::second(leaf), deleted_bit};
+                        return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 1.1.2     and the right child has more than the minimum number of bits left.
                         // Strategy: Delete bit from the left child
@@ -729,7 +905,10 @@ namespace ads {
                         a->left_ones -= deleted_bit;
                         a->left_ones += moved_bit;
 
-                        return {NodePtr::first(a), deleted_bit};
+                        a->total_excess = b->total_excess + c->total_excess;
+                        a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
+
+                        return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
                     // 1.2     and the left child has more than the minimum number of bits left.
@@ -738,9 +917,14 @@ namespace ads {
                     assert(b->size() > Leaf::min_num_bits);
 
                     auto deleted_bit = b->remove(i);
+
                     a->left_size--;
                     a->left_ones -= deleted_bit;
-                    return {NodePtr::first(a), deleted_bit};
+
+                    a->total_excess = b->total_excess + c->total_excess;
+                    a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
+
+                    return {NodeHandle::inner(a), deleted_bit};
                 }
             } else {
                 // 2.    i is in the right child
@@ -754,7 +938,7 @@ namespace ads {
 
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
-                        return {NodePtr::second(leaf), deleted_bit};
+                        return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 2.1.2     and the left child has more than the minimum number of bits left.
                         // Strategy: Delete bit from the right child
@@ -769,14 +953,22 @@ namespace ads {
                         a->left_size--;
                         a->left_ones -= moved_bit;
 
-                        return {NodePtr::first(a), deleted_bit};
+                        a->total_excess = b->total_excess + c->total_excess;
+                        a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
+
+                        return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
                     // 2.2     and the right child has more than the minimum number of bits left.
                     // Strategy: Directly delete bit from right child.
 
                     assert(c->size() > Leaf::min_num_bits);
-                    return {NodePtr::first(a), c->remove(i - a->left_size)};
+                    auto deleted_bit = c->remove(i - a->left_size);
+
+                    a->total_excess = b->total_excess + c->total_excess;
+                    a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
+
+                    return {NodeHandle::inner(a), deleted_bit};
                 }
             }
             assert(false);
@@ -815,13 +1007,12 @@ namespace ads {
             delete a;
             delete c;
 
-            b->total_excess = b->calculate_total_excess();
-            b->min_excess = b->calculate_min_excess();
+            std::tie(b->total_excess, b->min_excess) = b->calculate_excess_info();
 
             return b;
         }
 
-        static int height(NodePtr node) {
+        static int height(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
                 assert(inner->height == std::max(height(inner->left), height(inner->right)) + 1);
@@ -829,41 +1020,41 @@ namespace ads {
             } else { return 0; }
         }
 
-        static size_type total_excess(NodePtr node) {
+        static size_type total_excess(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? inner->total_excess : leaf->total_excess;
         }
 
-        static size_type min_excess(NodePtr node) {
+        static size_type min_excess(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? inner->min_excess : leaf->min_excess;
         }
 
-        static void update_excess_info_from_children_info(Inner *node) {
-            auto left_total_excess = total_excess(node->left);
-            node->total_excess = left_total_excess + total_excess(node->right);
-            node->min_excess = std::min(min_excess(node->left), left_total_excess + min_excess(node->right));
+        static void update_excess_info_from_children_info(Inner &node) {
+            auto left_total_excess = total_excess(node.left);
+            node.total_excess = left_total_excess + total_excess(node.right);
+            node.min_excess = std::min(min_excess(node.left), left_total_excess + min_excess(node.right));
         }
 
 #ifndef NDEBUG
 
-        static int size_(NodePtr node) {
+        static int size_(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? size_(inner->left) + size_(inner->right) : leaf->size();
         }
 
-        static int ones_(NodePtr node) {
+        static int ones_(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? ones_(inner->left) + ones_(inner->right) : leaf->rank1(leaf->size());
         }
 
-        static size_type total_excess_explicit(NodePtr node) {
+        static size_type total_excess_explicit(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? total_excess_explicit(inner->left) + total_excess_explicit(inner->right)
                          : leaf->calculate_total_excess();
         }
 
-        static size_type min_excess_explicit(NodePtr node) {
+        static size_type min_excess_explicit(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? std::min(min_excess_explicit(inner->left),
                                     total_excess(inner->left) + min_excess_explicit(inner->right))
@@ -872,7 +1063,7 @@ namespace ads {
 
 #endif
 
-        static int balance_factor(const NodePtr node) {
+        static int balance_factor(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
             return inner ? balance_factor(*inner) : 0;
         }
@@ -908,19 +1099,19 @@ namespace ads {
             assert(b);
 
             a->left = b->right;
-            b->right = NodePtr::first(a);
+            b->right = NodeHandle::inner(a);
 
             a->left_size -= b->left_size;
             a->left_ones -= b->left_ones;
 
             b->total_excess = a->total_excess;
             b->min_excess = a->min_excess;
-            update_excess_info_from_children_info(a);
+            update_excess_info_from_children_info(*a);
 
             a->height = std::max(height(a->left), height(a->right)) + 1;
-            b->height = std::max<int>(height(b->left), a->height) + 1;
+            b->height = std::max(height(b->left), a->height) + 1;
 
-            assert(std::get<0>(check_integrity(NodePtr::first(b))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(b))));
             return b;
         }
 
@@ -936,8 +1127,8 @@ namespace ads {
 
             b->right = c->left;
             a->left = c->right;
-            c->left = NodePtr::first(b);
-            c->right = NodePtr::first(a);
+            c->left = NodeHandle::inner(b);
+            c->right = NodeHandle::inner(a);
 
             a->left_size -= b->left_size + c->left_size;
             a->left_ones -= b->left_ones + c->left_ones;
@@ -946,14 +1137,14 @@ namespace ads {
 
             c->total_excess = a->total_excess;
             c->min_excess = a->min_excess;
-            update_excess_info_from_children_info(a);
-            update_excess_info_from_children_info(b);
+            update_excess_info_from_children_info(*a);
+            update_excess_info_from_children_info(*b);
 
             a->height = std::max(height(a->left), height(a->right)) + 1;
             b->height = std::max(height(b->left), height(b->right)) + 1;
             c->height = std::max(a->height, b->height) + 1;
 
-            assert(std::get<0>(check_integrity(NodePtr::first(c))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(c))));
             return c;
         }
 
@@ -968,8 +1159,8 @@ namespace ads {
             assert(c);
             a->right = c->left;
             b->left = c->right;
-            c->left = NodePtr::first(a);
-            c->right = NodePtr::first(b);
+            c->left = NodeHandle::inner(a);
+            c->right = NodeHandle::inner(b);
 
             b->left_size -= c->left_size;
             b->left_ones -= c->left_ones;
@@ -978,14 +1169,14 @@ namespace ads {
 
             c->total_excess = a->total_excess;
             c->min_excess = a->min_excess;
-            update_excess_info_from_children_info(a);
-            update_excess_info_from_children_info(b);
+            update_excess_info_from_children_info(*a);
+            update_excess_info_from_children_info(*b);
 
             a->height = std::max(height(a->left), height(a->right)) + 1;
             b->height = std::max(height(b->left), height(b->right)) + 1;
             c->height = std::max(a->height, b->height) + 1;
 
-            assert(std::get<0>(check_integrity(NodePtr::first(c))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(c))));
             return c;
         }
 
@@ -997,23 +1188,23 @@ namespace ads {
             Inner *b = a->right.cast().first;
             assert(b);
             a->right = b->left;
-            b->left = NodePtr::first(a);
+            b->left = NodeHandle::inner(a);
 
             b->left_size += a->left_size;
             b->left_ones += a->left_ones;
 
             b->total_excess = a->total_excess;
             b->min_excess = a->min_excess;
-            update_excess_info_from_children_info(a);
+            update_excess_info_from_children_info(*a);
 
             a->height = std::max(height(a->left), height(a->right)) + 1;
             b->height = std::max<int>(a->height, height(b->right)) + 1;
 
-            assert(std::get<0>(check_integrity(NodePtr::first(b))));
+            assert(std::get<0>(check_integrity(NodeHandle::inner(b))));
             return b;
         }
 
-        static void delete_node(NodePtr node) {
+        static void delete_node(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? delete_node(inner) : delete_node(leaf);
         }
@@ -1028,7 +1219,7 @@ namespace ads {
 
 #ifndef NDEBUG
 
-        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type> check_integrity(NodePtr node) {
+        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type> check_integrity(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
                 auto [left_ok, left_size, left_ones, left_height, left_total_excess, left_min_excess] = check_integrity(
@@ -1060,7 +1251,7 @@ namespace ads {
 
 #endif
 
-        static size_type required_bits(NodePtr node) {
+        static size_type required_bits(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
                 return required_bits(inner->left) + required_bits(inner->right) + sizeof(Inner) * 8;
@@ -1079,7 +1270,7 @@ namespace ads {
 
 #ifndef NDEBUG
             auto [ok, size, ones, height, total_excess, min_excess] = check_integrity(m_root);
-            assert(ok && (m_bv_size == size) && (total_excess == 0) && (min_excess >= 0));
+            assert(ok && (m_bv_size == size)); // && (total_excess == 0) && (min_excess >= 0));
 #endif
         }
 
@@ -1122,33 +1313,33 @@ namespace ads {
             return m_bv_size;
         }
 
-        size_type find_close(size_type i) {
-            // TODO
-            assert(false);
+        [[nodiscard]] size_type find_close(size_type i) const {
+            assert(access(i) == open);
+            return forward_search(m_root, i, 0);
         }
 
-        size_type find_open(size_type i) {
-            // TODO
-            assert(false);
+        [[nodiscard]] size_type find_open(size_type i) const {
+            assert(access(i) == close);
+            return backward_search(m_root, i, 0);
         }
 
-        size_type excess(size_type i) {
+        [[nodiscard]] size_type excess(size_type i) const {
             return rank(i, open) - rank(i, close);
         }
 
-        size_type enclose(size_type i) {
-            // TODO
-            assert(false);
+        [[nodiscard]] size_type enclose(size_type i) const {
+            assert(access(i) == open);
+            return backward_search(m_root, i, 2);
         }
 
 
     public:
-        BP2() : m_root(NodePtr::second(new Leaf)), m_bv_size(0) {
+        BP2() : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
             insert(size(), open);
             insert(size(), close);
         }
 
-        explicit BP2(const std::vector<bool> &bits) : m_root(NodePtr::second(new Leaf)), m_bv_size(0) {
+        explicit BP2(const std::vector<bool> &bits) : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
             for (auto bit: bits) {
                 insert(size(), bit);
             }
@@ -1158,6 +1349,9 @@ namespace ads {
 
         void insertchild(size_type v, size_type i, size_type k) {
             // TODO
+            auto v_idx = select(v+1, open);
+            assert(access(v_idx) == open);
+
             assert(false);
         }
 
@@ -1170,6 +1364,7 @@ namespace ads {
         size_type ith_child(size_type v, size_type i) {
             // TODO
             assert(false);
+            return 0;
         }
 
         size_type parent(size_type v) {
@@ -1195,7 +1390,7 @@ namespace ads {
         }
 
     private:
-        static void print(std::ostream &os, NodePtr node, size_type indent) {
+        static void print(std::ostream &os, NodeHandle node, size_type indent) {
             auto [inner, leaf] = node.cast();
             for (size_type i = 0; i < indent; ++i) os << ' ';
             if (inner) {
@@ -1216,7 +1411,9 @@ namespace ads {
 
         FRIEND_TEST(BP2Test, Remove);
 
-        NodePtr m_root;
+        FRIEND_TEST(BP2Test, BVInsert);
+
+        NodeHandle m_root;
         size_type m_bv_size;
     };
 }

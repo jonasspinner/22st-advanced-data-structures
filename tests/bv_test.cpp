@@ -69,7 +69,6 @@ TEST(NaiveBVTest, Lecture01) {
 
 TEST(BVTest, Leaf) {
     using BV = ads::DynamicBitVector<uint8_t, 2>;
-    using Inner = BV::Inner;
     using Leaf = BV::Leaf;
 
     auto eq = [](const Leaf &leaf, uint64_t x, size_t size) {
