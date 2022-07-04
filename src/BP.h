@@ -91,11 +91,6 @@ namespace ads {
 
             [[nodiscard]] bool access(size_type i) const { return m_bits.access(i); }
 
-            void flip(size_type i) {
-                m_bits.flip(i);
-                std::tie(total_excess, min_excess) = calculate_excess_info();// TODO: make more efficient
-            }
-
             [[nodiscard]] size_type rank1(size_type i) const { return m_bits.rank1(i); }
 
             [[nodiscard]] size_type select1(size_type i) const { return m_bits.select1(i); }
@@ -339,7 +334,6 @@ namespace ads {
             }
 
             [[nodiscard]] size_type calculate_min_excess_slow() const {
-                // TODO: make more efficient
                 size_type excess = 0;
                 size_type current_min_excess = 0;
                 for (size_type i = 0; i < size(); ++i) {
@@ -410,21 +404,6 @@ namespace ads {
         static bool access(const Inner &inner, size_type i) {
             // If index i is the left subtree, go there, otherwise adjust i and go to the right subtree.
             return i < inner.left_size ? access(inner.left, i) : access(inner.right, i - inner.left_size);
-        }
-
-        static void flip(NodeHandle node, size_type i) {
-            // TODO: update total and min excess
-            assert(false);
-            // Dispatch dependent on node type.
-            auto [inner, leaf] = node.cast();
-            inner ? flip(*inner, i) : leaf->flip(i);
-        }
-
-        static void flip(Inner &inner, size_type i) {
-            // TODO: update total and min excess
-            assert(false);
-            // If index i is the left subtree, go there, otherwise adjust i and go to the right subtree.
-            i < inner.left_size ? flip(inner.left, i) : flip(inner.right, i - inner.left_size);
         }
 
         static void rank1(const NodeHandle &node, size_type i, size_type &rank) {
@@ -527,7 +506,7 @@ namespace ads {
                 if (i < left_size) {
                     return backward_search(inner->left, i, d);
                 } else if (i == right_end) {
-                    if (total_excess(inner->right) - d >= min_excess(inner->right)) { // TODO: check
+                    if (total_excess(inner->right) - d >= min_excess(inner->right)) {
                         auto [idx, d_prime] = backward_search(inner->right, right_end, d);
                         assert(idx != left_end);
                         idx += left_size;
@@ -538,7 +517,7 @@ namespace ads {
                 } else {
                     auto [idx, d_prime] = backward_search(inner->right, i - left_size, d);
                     if (idx == left_end) {
-                        if (total_excess(inner->left) - d_prime >= min_excess(inner->left)) { // TODO: check
+                        if (total_excess(inner->left) - d_prime >= min_excess(inner->left)) {
                             auto [idx_l, d_prime_l] = backward_search(inner->left, right_end, d_prime);
                             assert(idx_l != left_end);
                             return {idx_l, d_prime_l};
@@ -848,7 +827,6 @@ namespace ads {
         }
 
         static std::pair<NodeHandle, bool> remove_first_level(Inner *a, size_type i) {
-            // TODO: update total and min excess
             assert(std::get<0>(check_integrity(*a)));
             assert(a->height == 1);
             //   a
@@ -1293,11 +1271,6 @@ namespace ads {
             assert(ok && (m_bv_size == size));
             assert((m_bv_size % 2 == 1) || ((total_excess == 0) && (min_excess >= 0)));
 #endif
-        }
-
-        void flip(size_type i) const {
-            assert(i < size());
-            flip(m_root, i);
         }
 
         [[nodiscard]] size_type rank(size_type i, bool b) const {
