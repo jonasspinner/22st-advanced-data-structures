@@ -15,7 +15,7 @@ namespace ads {
     };
     struct bv_operation {
         bv_operation_kind kind{};
-        size_t i{};
+        int i{};
         bool b{};
     };
 }
@@ -142,9 +142,9 @@ namespace ads {
     };
     struct bp_operation {
         bp_operation_kind kind{};
-        size_t v{};
-        size_t i{};
-        size_t k{};
+        int v{};
+        int i{};
+        int k{};
     };
 }
 

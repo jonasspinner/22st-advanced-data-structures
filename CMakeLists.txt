@@ -57,3 +57,6 @@ target_link_libraries(utils_benchmark benchmark::benchmark)
 
 add_executable(bv_benchmark benchmarks/bv_benchmark.cpp)
 target_link_libraries(bv_benchmark benchmark::benchmark)
+
+add_executable(bp_benchmark benchmarks/bp_benchmark.cpp)
+target_link_libraries(bp_benchmark benchmark::benchmark)

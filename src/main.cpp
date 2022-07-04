@@ -75,9 +75,11 @@ namespace ads {
 
         auto t0 = std::chrono::steady_clock::now();
 
-        ads::BP2<> bp;
+        ads::BP2<uint64_t, 64> bp;
 
+        int iterations = 0;
         for (auto operation: operations) {
+            if (iterations % 1000 == 0) std::cout << iterations << "\n";
             switch (operation.kind) {
                 case bp_operation_kind::insertchild:
                     bp.insertchild(operation.v, operation.i, operation.k);
@@ -86,6 +88,7 @@ namespace ads {
                     bp.deletenode(operation.v);
                     break;
             }
+            ++iterations;
         }
 
         auto t1 = std::chrono::steady_clock::now();
@@ -103,6 +106,8 @@ int main(int argc, char *argv[]) {
     auto args = ads::parse(argc, argv);
     if (args.algo == ads::ParseResult::AlgoKind::bv) {
         ads::bv(args.input, args.output);
+    } else if (args.algo == ads::ParseResult::AlgoKind::bp) {
+        ads::bp(args.input, args.output);
     }
     return 0;
 }

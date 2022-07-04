@@ -19,32 +19,39 @@ namespace ads {
         constexpr static size_type num_blocks = NumBlocks;
 
         static_assert(num_blocks > 1);
-        using Bits = std::array<block_type, num_blocks>;
+        using Blocks = std::array<block_type, num_blocks>;
         constexpr static size_type block_width = std::numeric_limits<block_type>::digits; // Number of bits per block.
 
     private:
-        Bits m_bits{};
+        Blocks m_blocks{};
         size_type m_size{};
     public:
+        StaticBitVector() = default;
+
+        StaticBitVector(Blocks blocks, size_type size) : m_blocks(blocks), m_size(size) {
+            assert(size <= num_blocks * block_width);
+        }
 
         /**
          * @return the number of bits stored.
          */
         [[nodiscard]] constexpr size_type size() const { return m_size; }
 
+        [[nodiscard]] constexpr bool empty() const { return size() == 0; }
+
         /**
          * @return the maximum number of bits that can be stored.
          */
-        [[nodiscard]] constexpr size_type capacity() const { return m_bits.size() * block_width; }
+        [[nodiscard]] constexpr size_type capacity() const { return m_blocks.size() * block_width; }
 
         [[nodiscard]] constexpr block_type blocks(size_type j) const {
-            assert(j < m_bits.size());
-            return m_bits[j];
+            assert(j < m_blocks.size());
+            return m_blocks[j];
         }
 
         void clear() {
             for (size_type j = 0; j < (size() - 1) / block_width; ++j) {
-                m_bits[j] = 0;
+                m_blocks[j] = 0;
             }
             m_size = 0;
         }
@@ -53,14 +60,14 @@ namespace ads {
             assert(i < size());
             size_type j = i / block_width;
             size_type k = i % block_width;
-            return (m_bits[j] >> k) & bit_mask(0);
+            return (m_blocks[j] >> k) & bit_mask(0);
         }
 
         void flip(size_type i) {
             assert(i < size());
             size_type j = i / block_width;
             size_type k = i % block_width;
-            m_bits[j] ^= bit_mask(k);
+            m_blocks[j] ^= bit_mask(k);
         }
 
         [[nodiscard]] size_type rank(size_type i, bool b) const {
@@ -73,14 +80,14 @@ namespace ads {
             size_type rank = 0;
             // Sum up number of ones in all blocks before block `j`.
             for (size_type block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
-                rank += std::popcount(m_bits[block_idx]);
+                rank += std::popcount(m_blocks[block_idx]);
                 i -= block_width;
             }
             // This covers the case that `i` equals `size` and prevents memory access after the last block
             if (i == 0) return rank;
             assert(i < block_width);
             // Only count number of ones in the bits lower than `i`.
-            block_type masked_block = m_bits[j] & lower_bit_mask(i);
+            block_type masked_block = m_blocks[j] & lower_bit_mask(i);
             rank += std::popcount(masked_block);
             return rank;
         }
@@ -97,7 +104,7 @@ namespace ads {
             // `result` is the number of bits in the previous blocks.
             // `i` is updated such that it corresponds to the `i`th one bit in block `j`.
             while (j < num_blocks - 1) {
-                size_type count = std::popcount(m_bits[j]);
+                size_type count = std::popcount(m_blocks[j]);
                 if (i > count) {
                     i -= count;
                     result += block_width;
@@ -106,7 +113,7 @@ namespace ads {
             }
             if (i == 0) return result;
             assert(j < num_blocks);
-            block_type block = m_bits[j];
+            block_type block = m_blocks[j];
             return result + ads::select(block, i);
         }
 
@@ -118,7 +125,7 @@ namespace ads {
             // `result` is the number of bits in the previous blocks.
             // `i` is updated such that it corresponds to the `i`th zero bit in block `j`.
             while (j < num_blocks - 1) {
-                size_type count = block_width - std::popcount(m_bits[j]);
+                size_type count = block_width - std::popcount(m_blocks[j]);
                 if (i > count) {
                     i -= count;
                     result += block_width;
@@ -129,7 +136,7 @@ namespace ads {
             assert(j < num_blocks);
 
             // Use select_1(i) on inverted block to calculate select_0(i)
-            block_type block = ~m_bits[j];
+            block_type block = ~m_blocks[j];
             return result + ads::select(block, i);
         }
 
@@ -137,7 +144,7 @@ namespace ads {
             size_type last_block_idx = (size() - 1) / block_width;
             size_type num = 0;
             for (size_type j = 0; j <= last_block_idx; ++j) {
-                num += std::popcount(m_bits[j]);
+                num += std::popcount(m_blocks[j]);
             }
             return num;
         }
@@ -153,7 +160,7 @@ namespace ads {
             size_type j = i / block_width;
             size_type k = i % block_width;
 
-            bool deleted_bit = (m_bits[j] >> k) & bit_mask(0);
+            bool deleted_bit = (m_blocks[j] >> k) & bit_mask(0);
 
             auto lo_mask = lower_bit_mask(k);
             auto hi_mask = ~(lower_bit_mask(k + 1));
@@ -161,31 +168,58 @@ namespace ads {
 
             // [x_0,...,x_{k-1}][  x_k  ][x_{k+1},...,x_{B-1}]
             // [x_0,...,x_{k-1}][x_{k+1},...,x_{B-1}][       ]
-            m_bits[j] = (m_bits[j] & lo_mask) | ((m_bits[j] & hi_mask) >> 1);
+            m_blocks[j] = (m_blocks[j] & lo_mask) | ((m_blocks[j] & hi_mask) >> 1);
 
             // Shift down the higher blocks by one position and place lowest bit at the highest position of previous block.
             while (++j < num_blocks) {
-                auto m = ((m_bits[j] & static_cast<block_type>(1)) << (block_width - 1));
-                m_bits[j - 1] |= m;
-                m_bits[j] >>= 1;
+                auto m = ((m_blocks[j] & static_cast<block_type>(1)) << (block_width - 1));
+                m_blocks[j - 1] |= m;
+                m_blocks[j] >>= 1;
             }
             m_size--;
             return deleted_bit;
         }
 
-        block_type remove_first_block() {
+        /**
+         * Remove the highest bit.
+         * @return The bit that has been deleted
+         */
+        bool pop_back() {
+            assert(!empty());
+            m_size--;
+            size_type j = size() / block_width;
+            size_type k = size() % block_width;
+            auto deleted_bit = (m_blocks[j] >> k) & 1;
+            m_blocks[j] &= ~bit_mask(k);
+            return deleted_bit;
+        }
+
+        block_type pop_back_block_aligned() {
             assert(size() >= block_width);
-            block_type first_block = m_bits[0];
+            assert(size() % block_width == 0);
+            size_type last_block_idx = (size() - 1) / block_width;
+            auto block = m_blocks[last_block_idx];
+            m_blocks[last_block_idx] = 0;
+            m_size -= block_width;
+            return block;
+        }
+
+        bool pop_front() {
+            assert(!empty());
+            return remove(0);
+        }
+
+        block_type pop_front_block() {
+            assert(size() >= block_width);
+            block_type first_block = m_blocks[0];
             size_type last_block_idx = (size() - 1) / block_width;
             for (size_type j = 0; j < last_block_idx; ++j) {
-                m_bits[j] = m_bits[j+1];
+                m_blocks[j] = m_blocks[j + 1];
             }
-            m_bits[last_block_idx] = 0;
+            m_blocks[last_block_idx] = 0;
             m_size -= block_width;
             return first_block;
         }
-
-
 
         /**
          * Inserts a bit at position `i` \in [0..size].
@@ -200,7 +234,7 @@ namespace ads {
             size_type j = i / block_width;
             size_type k = i % block_width;
 
-            bool highest_bit_is_set = m_bits[j] & bit_mask(block_width - 1);
+            bool highest_bit_is_set = m_blocks[j] & bit_mask(block_width - 1);
             auto lo_mask = lower_bit_mask(k);
             auto hi_mask = ~lo_mask;
             assert((lo_mask | hi_mask) == ~(static_cast<block_type>(0)));
@@ -208,15 +242,16 @@ namespace ads {
             // Leave lower bits and shift up higher bits. x_{B-1} was saved to `highest_bit_is_set`.
             // [x_0,...,x_{k-1}][x_k,   ...  ,x_{B-1}]
             // [x_0,...,x_{k-1}][ b ][x_k,...,x_{B-2}]
-            m_bits[j] = (m_bits[j] & lo_mask) | ((m_bits[j] & hi_mask) << 1);
-            if (b) m_bits[j] |= bit_mask(k);
+            m_blocks[j] = (m_blocks[j] & lo_mask) | ((m_blocks[j] & hi_mask) << 1);
+            if (b) m_blocks[j] |= bit_mask(k);
 
+            size_type last_block_idx = std::min(size() / block_width, num_blocks - 1); // TODO: check
             // Shift up the higher blocks by one position and insert the last bit of previous block at the lowest position.
-            while (++j < num_blocks) {
+            while (++j <= last_block_idx) {
                 bool prev_highest_bit_is_set = highest_bit_is_set;
-                highest_bit_is_set = (m_bits[j] >> (block_width - 1)) & bit_mask(0);
-                m_bits[j] <<= 1;
-                if (prev_highest_bit_is_set) m_bits[j] |= bit_mask(0);
+                highest_bit_is_set = (m_blocks[j] >> (block_width - 1)) & bit_mask(0);
+                m_blocks[j] <<= 1;
+                if (prev_highest_bit_is_set) m_blocks[j] |= bit_mask(0);
             }
 
             if (size() == capacity()) {
@@ -227,21 +262,133 @@ namespace ads {
             return {false, false};
         }
 
-        bool append(bool b) {
+        bool push_back(bool b) {
             if (size() == capacity()) return true;
-            size_type j = size() / block_width;
-            size_type k = size() % block_width;
-            m_bits[j] |= bit_mask(k);
+            if (b) {
+                size_type j = size() / block_width;
+                size_type k = size() % block_width;
+                m_blocks[j] |= bit_mask(k);
+            }
             m_size++;
             return false;
         }
 
-        void append_block_aligned(block_type block) {
+        void push_back_block_aligned(block_type block) {
             assert(size() % block_width == 0);
             assert(size() <= capacity() - block_width);
             size_type j = size() / block_width;
-            m_bits[j] = block;
+            m_blocks[j] = block;
             m_size += block_width;
+        }
+
+        [[nodiscard]] std::pair<bool, bool> push_front(bool b) {
+            return insert(0, b);
+        }
+
+        void push_front_block(block_type block) {
+            assert(size() + block_width <= capacity());
+            size_type last_block_idx = std::min((size() - 1) / block_width, num_blocks - 1);
+            for (size_type j = last_block_idx; j > 0; --j) {
+                m_blocks[j] = m_blocks[j - 1];
+            }
+            m_blocks[0] = block;
+            m_size += block_width;
+        }
+
+        void concat_block_aligned(const StaticBitVector &right) {
+            assert(size() % block_width == 0);
+            assert(right.size() % block_width == 0);
+            assert(size() + right.size() <= capacity());
+            size_type k = 0;
+            for (size_type j = size() / block_width; j < (size() + right.size()) / block_width; ++j, ++k) {
+                m_blocks[j] = right.m_blocks[k];
+            }
+            m_size += k * block_width;
+            assert(size() <= capacity());
+        }
+
+        void split_into_empty(StaticBitVector &right) {
+            assert(right.size() == 0);
+            // Copy blocks from left to right, starting at the middle of left and the first block of right.
+            size_type k = 0;
+            static_assert(num_blocks % 2 == 0);
+            for (size_type j = num_blocks / 2; j < num_blocks; ++j, ++k) {
+                right.m_blocks[k] = m_blocks[j];
+                m_blocks[j] = 0;
+            }
+            m_size -= k * block_width;
+            right.m_size += k * block_width;
+        }
+
+
+        static std::pair<size_type, size_type> balance_sizes(StaticBitVector &left, StaticBitVector &right) {
+            assert(false);
+            // TODO
+            static_assert(num_blocks % 2 == 0);
+
+            size_type num_ones_moved_to_left = 0;
+            size_type num_ones_moved_to_right = 0;
+
+            const size_type original_left_num_blocks = left.m_size / block_width;
+            const size_type original_right_num_blocks = right.m_size / block_width;
+
+            if (original_left_num_blocks + original_right_num_blocks > 2 * num_blocks) return {};
+
+            if (left.m_size + 2 * block_width <= right.m_size) {
+                if (left.m_size % block_width == 0) {
+                    // ab______ cdefgh__
+                    const size_type shift = (original_right_num_blocks - original_left_num_blocks) / 2;
+                    assert(original_left_num_blocks + shift <= num_blocks);
+                    assert(original_right_num_blocks >= shift);
+
+                    size_type idx = 0;
+                    for (; idx < shift; ++idx) {
+                        num_ones_moved_to_left += std::popcount(right.m_blocks[idx]);
+                        left.m_blocks[original_left_num_blocks + idx] = right.m_blocks[idx];
+                        right.m_blocks[idx] = right.m_blocks[idx + shift];
+                    }
+                    // abcd____ efefgh__
+                    for (; idx < original_right_num_blocks - shift; ++idx)
+                        right.m_blocks[idx] = right.m_blocks[idx + shift];
+                    // abcd____ efghgh__
+                    for (; idx < original_right_num_blocks; ++idx)
+                        right.m_blocks[idx] = 0;
+                    // abcd____ efgh____
+
+                    left.m_size += shift * block_width;
+                    right.m_size -= shift * block_width;
+                } else {
+
+                }
+            } else if (left.m_size >= right.m_size + 2 * block_width) {
+                if (left.m_size % block_width == 0) {
+                    // abcdef__ gh______
+                    const size_type shift = (original_left_num_blocks - original_right_num_blocks) / 2;
+                    assert(original_left_num_blocks >= shift);
+                    assert(original_right_num_blocks + shift <= num_blocks);
+
+                    size_type idx = original_right_num_blocks - 1;
+                    for (; idx >= shift; --idx) {
+                        right.m_blocks[idx + shift] = right.m_blocks[idx];
+                    }
+                    // abcdef__ ghgh____
+                    assert(idx = shift - 1);
+                    for (; idx >= 0; --idx) {
+                        const auto l = original_left_num_blocks - shift + idx;
+                        num_ones_moved_to_right += std::popcount(left.m_blocks[l]);
+                        right.m_blocks[idx] = left.m_blocks[l];
+                        left.m_blocks[l] = 0;
+                    }
+                    // abcd____ efgh____
+
+                    left.m_size -= shift * block_width;
+                    right.m_size += shift * block_width;
+                } else {
+
+                }
+            }
+
+            return {num_ones_moved_to_left, num_ones_moved_to_right};
         }
 
         friend std::ostream &operator<<(std::ostream &os, const StaticBitVector &bv) {

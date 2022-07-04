@@ -71,10 +71,10 @@ TEST(BVTest, Leaf) {
     using BV = ads::DynamicBitVector<uint8_t, 2>;
     using Leaf = BV::Leaf;
 
-    auto eq = [](const Leaf &leaf, uint64_t x, size_t size) {
+    auto eq = [](const Leaf &leaf, uint64_t x, int size) {
         if (leaf.size() != size) return false;
         std::bitset<64> bs(x);
-        for (size_t i = 0; i < leaf.size(); ++i) {
+        for (int i = 0; i < leaf.size(); ++i) {
             if (bs[leaf.size() - i - 1] != leaf.access(i)) {
                 std::cerr << "bs[" << leaf.size() - i - 1 << "] = " << bs[leaf.size() - i - 1] << " leaf[" << i << "] = " << leaf.access(i) << std::endl;
                 return false;
@@ -84,8 +84,7 @@ TEST(BVTest, Leaf) {
     };
 
     Leaf leaf;
-    leaf.m_bits = {0, 0};
-    leaf.m_size = 12;
+    leaf.m_bits = {{0, 0}, 12};
 
     ASSERT_TRUE(eq(leaf, 0b0000'0000'0000, 12));
 
@@ -168,23 +167,23 @@ TEST(BVTest, Leaf) {
 }
 
 TEST(BVTest, BitMasks) {
-    using BV = ads::DynamicBitVector<uint64_t, 4>;
-    using Leaf = BV::Leaf;
+    using BV = ads::StaticBitVector<uint64_t, 4>;
 
-    ASSERT_EQ(Leaf::bit_mask(0), 0b1);
-    ASSERT_EQ(Leaf::bit_mask(63), 0b1000000000000000000000000000000000000000000000000000000000000000);
-    ASSERT_EQ(Leaf::lower_bit_mask(1), 0b1);
-    ASSERT_EQ(Leaf::lower_bit_mask(63), 0b0111111111111111111111111111111111111111111111111111111111111111);
-    ASSERT_EQ(Leaf::lower_bit_mask(64), 0b1111111111111111111111111111111111111111111111111111111111111111);
+    ASSERT_EQ(BV::bit_mask(0), 0b1);
+    ASSERT_EQ(BV::bit_mask(63), 0b1000000000000000000000000000000000000000000000000000000000000000);
+    ASSERT_EQ(BV::lower_bit_mask(1), 0b1);
+    ASSERT_EQ(BV::lower_bit_mask(63), 0b0111111111111111111111111111111111111111111111111111111111111111);
+    ASSERT_EQ(BV::lower_bit_mask(64), 0b1111111111111111111111111111111111111111111111111111111111111111);
 }
 
 TEST(BVTest, Insert) {
     using BV = ads::DynamicBitVector<>;
+    using size_type = BV::size_type;
 
-    auto eq = [](const auto &v, uint64_t x, size_t size) {
+    auto eq = [](const auto &v, uint64_t x, int size) {
         if (v.size() != size) return false;
         std::bitset<64> bs(x);
-        for (size_t i = 0; i < v.size(); ++i) {
+        for (int i = 0; i < v.size(); ++i) {
             if (bs[v.size() - i - 1] != v.access(i)) {
                 std::cerr << "bs[" << v.size() - i - 1 << "] = " << bs[v.size() - i - 1] << " bv[" << i << "] = " << v.access(i) << std::endl;
                 return false;
@@ -198,13 +197,13 @@ TEST(BVTest, Insert) {
     ASSERT_EQ(bv.size(), 0);
     ASSERT_TRUE(eq(bv, 0b0, 0));
 
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_type i = 0; i < 8; ++i) {
         bv.insert(i, (i % 2) == 0);
         ASSERT_EQ(bv.size(), i + 1);
     }
     ASSERT_TRUE(eq(bv, 0b10101010, 8));
 
-    for (size_t i = 8; i < 16; ++i) {
+    for (size_type i = 8; i < 16; ++i) {
         bv.insert(i, true);
         ASSERT_EQ(bv.size(), i + 1);
     }
@@ -249,7 +248,7 @@ TEST(BVTest, Remove) {
 
     BV bv;
 
-    for (size_t i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i) {
         bv.insert(i, (i % 2) == 0);
     }
 
@@ -257,7 +256,7 @@ TEST(BVTest, Remove) {
 
     std::cout << "+++\n" << bv << "---\n";
 
-    for (size_t i = 63; i > 0; --i) {
+    for (int i = 63; i > 0; --i) {
         if ((i % 2) == 0) {
             bv.remove(i);
         }
@@ -277,8 +276,8 @@ TEST(BVTest, Remove) {
     std::bernoulli_distribution bit_dist;
     size_t n = 1000;
     for (size_t i = 0; i < n; ++i) {
-        std::uniform_int_distribution<size_t> index_dist(0, bv.size());
-        size_t index = index_dist(gen);
+        std::uniform_int_distribution<int> index_dist(0, bv.size());
+        auto index = index_dist(gen);
         bool bit = bit_dist(gen);
         bv.insert(index, bit);
         ASSERT_EQ(bv.access(index), bit);
@@ -287,11 +286,11 @@ TEST(BVTest, Remove) {
 
     for (int k = 0; k < 10; ++k) {
         for (size_t i = 0; i < n; ++i) {
-            std::uniform_int_distribution<size_t> index_dist(0, bv.size());
+            std::uniform_int_distribution<int> index_dist(0, bv.size());
             bv.insert(index_dist(gen), bit_dist(gen));
         }
         for (size_t i = 0; i < n; ++i) {
-            std::uniform_int_distribution<size_t> index_dist(0, bv.size() - 1);
+            std::uniform_int_distribution<int> index_dist(0, bv.size() - 1);
             bv.remove(index_dist(gen));
         }
     }
@@ -322,7 +321,7 @@ TEST(BVTest, RankSelect) {
 
     ASSERT_EQ(bv.rank(bv.select(num_zeros, false) + 1, false), num_zeros);
 
-    std::uniform_int_distribution<size_t> index_dist(0, bv.size() - 1);
+    std::uniform_int_distribution<int> index_dist(0, bv.size() - 1);
     std::uniform_int_distribution<size_t> rank0_dist(1, num_zeros);
     std::uniform_int_distribution<size_t> rank1_dist(1, num_ones);
     for (int k = 0; k < 100; ++k) {

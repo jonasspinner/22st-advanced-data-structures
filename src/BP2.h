@@ -12,7 +12,8 @@
 
 #include "TaggedPointer.h"
 #include "utils.h"
-
+#include "BitRange.h"
+#include "StaticBitVector.h"
 
 namespace ads {
     template<class BlockType = uint64_t, size_t NumBlocks = 64>
@@ -33,17 +34,21 @@ namespace ads {
             explicit NodeHandle(TaggedPointer<Inner, Leaf> ptr) : m_ptr(ptr) {}
 
         public:
-            static auto new_leaf() { return leaf(new Leaf); }
+            [[nodiscard]] constexpr static auto new_leaf() { return leaf(new Leaf); }
 
-            static auto inner(Inner *ptr) { return NodeHandle(TaggedPointer<Inner, Leaf>::first(ptr)); }
+            [[nodiscard]] constexpr static auto inner(Inner *ptr) {
+                return NodeHandle(TaggedPointer<Inner, Leaf>::first(ptr));
+            }
 
-            static auto leaf(Leaf *ptr) { return NodeHandle(TaggedPointer<Inner, Leaf>::second(ptr)); }
+            [[nodiscard]] constexpr static auto leaf(Leaf *ptr) {
+                return NodeHandle(TaggedPointer<Inner, Leaf>::second(ptr));
+            }
 
-            std::pair<Inner *, Leaf *> cast() { return m_ptr.cast(); }
+            [[nodiscard]] constexpr std::pair<Inner *, Leaf *> cast() { return m_ptr.cast(); }
 
-            std::pair<const Inner *, const Leaf *> cast() const { return m_ptr.cast(); }
+            [[nodiscard]] constexpr std::pair<const Inner *, const Leaf *> cast() const { return m_ptr.cast(); }
 
-            [[nodiscard]] size_type height() const {
+            [[nodiscard]] constexpr size_type height() const {
                 auto [inner, leaf] = m_ptr.cast();
                 return inner ? inner->height : 0;
             }
@@ -64,228 +69,250 @@ namespace ads {
 
         struct Leaf {
             using block_type = BlockType;
-            constexpr static size_type num_blocks = NumBlocks;
+            constexpr static size_type max_num_blocks = NumBlocks;
 
-            static_assert(num_blocks > 1);
-            using Bits = std::array<block_type, num_blocks>;
+            static_assert(max_num_blocks > 1);
+            using Bits = StaticBitVector<block_type, max_num_blocks>;
             constexpr static size_type block_width = std::numeric_limits<block_type>::digits; // Number of bits per block.
 
             // Split leave if it has more that `max_num_bits` and merge two leaves if both have `min_num_bits`.
-            constexpr static size_type max_num_bits = block_width * num_blocks;
+            constexpr static size_type max_num_bits = block_width * max_num_blocks;
             constexpr static size_type min_num_bits = max_num_bits / 4;
 
             Bits m_bits{};
-            size_type m_size{};
             size_type total_excess{};
             size_type min_excess{};
 
-            /**
-             * @return the number of bits stored.
-             */
-            [[nodiscard]] size_type size() const { return m_size; }
+            [[nodiscard]] size_type size() const { return m_bits.size(); }
 
-            /**
-             * @return the maximum number of bits that can be stored.
-             */
-            [[nodiscard]] constexpr size_type capacity() const { return m_bits.size() * block_width; }
+            [[nodiscard]] constexpr size_type capacity() const { return m_bits.capacity(); }
 
-            [[nodiscard]] bool access(size_type i) const {
-                assert(0 <= i);
-                assert(i < size());
-                size_type j = i / block_width;
-                size_type k = i % block_width;
-                return (m_bits[j] >> k) & bit_mask(0);
-            }
+            [[nodiscard]] constexpr size_type num_blocks() const { return m_bits.size() / block_width; }
+
+            [[nodiscard]] bool access(size_type i) const { return m_bits.access(i); }
 
             void flip(size_type i) {
-                assert(i < size());
-                size_type j = i / block_width;
-                size_type k = i % block_width;
-                m_bits[j] ^= bit_mask(k);
-
-                total_excess += (m_bits[j] >> k) & bit_mask(0) ? +1 : -1;
-                min_excess = calculate_min_excess();
+                m_bits.flip(i);
+                std::tie(total_excess, min_excess) = calculate_excess_info();// TODO: make more efficient
             }
 
-            [[nodiscard]] size_type rank1(size_type i) const {
-                assert(0 <= i);
-                assert(i <= size());
-                size_type j = i / block_width;
-                size_type rank = 0;
-                // Sum up number of ones in all blocks before block `j`.
-                for (size_type block_idx = 0; block_idx < num_blocks && block_idx < j; ++block_idx) {
-                    rank += std::popcount(m_bits[block_idx]);
-                    i -= block_width;
-                }
-                // This covers the case that `i` equals `size` and prevents memory access after the last block
-                if (i == 0) return rank;
-                assert(i < block_width);
-                // Only count number of ones in the bits lower than `i`.
-                block_type masked_block = m_bits[j] & lower_bit_mask(i);
-                rank += std::popcount(masked_block);
-                return rank;
-            }
+            [[nodiscard]] size_type rank1(size_type i) const { return m_bits.rank1(i); }
 
-            [[nodiscard]] size_type select1(size_type i) const {
-                assert(i > 0);
-                size_type j = 0;
-                size_type result = 0;
-                // Skip blocks until the `i`th ones bit is in block `j`.
-                // `result` is the number of bits in the previous blocks.
-                // `i` is updated such that it corresponds to the `i`th one bit in block `j`.
-                while (j < num_blocks - 1) {
-                    size_type count = std::popcount(m_bits[j]);
-                    if (i > count) {
-                        i -= count;
-                        result += block_width;
-                        j++;
-                    } else { break; }
-                }
-                if (i == 0) return result;
-                assert(j < num_blocks);
-                block_type block = m_bits[j];
-                return result + ads::select(block, i);
-            }
+            [[nodiscard]] size_type select1(size_type i) const { return m_bits.select1(i); }
 
-            [[nodiscard]] size_type select0(size_type i) const {
-                assert(i > 0);
-                size_type j = 0;
-                size_type result = 0;
-                // Skip blocks until the `i`th zero bit is in block `j`.
-                // `result` is the number of bits in the previous blocks.
-                // `i` is updated such that it corresponds to the `i`th zero bit in block `j`.
-                while (j < num_blocks - 1) {
-                    size_type count = block_width - std::popcount(m_bits[j]);
-                    if (i > count) {
-                        i -= count;
-                        result += block_width;
-                        j++;
-                    } else { break; }
-                }
-                if (i == 0) return result;
-                assert(j < num_blocks);
+            [[nodiscard]] size_type select0(size_type i) const { return m_bits.select0(i); }
 
-                // Use select_1(i) on inverted block to calculate select_0(i)
-                block_type block = ~m_bits[j];
-                return result + ads::select(block, i);
-            }
-
-            /**
-             * Remove the bit at position `i` \in [0..size-1].
-             * @param i
-             * @return The bit that has been deleted.
-             */
             bool remove(size_type i) {
-                assert(i < size());
-                assert(size() != 0);
-                size_type j = i / block_width;
-                size_type k = i % block_width;
-
-                bool deleted_bit = (m_bits[j] >> k) & bit_mask(0);
-
-                auto lo_mask = lower_bit_mask(k);
-                auto hi_mask = ~(lower_bit_mask(k + 1));
-                assert((lo_mask | hi_mask) == ~(bit_mask(k)));
-
-                // [x_0,...,x_{k-1}][  x_k  ][x_{k+1},...,x_{B-1}]
-                // [x_0,...,x_{k-1}][x_{k+1},...,x_{B-1}][       ]
-                m_bits[j] = (m_bits[j] & lo_mask) | ((m_bits[j] & hi_mask) >> 1);
-
-                // Shift down the higher blocks by one position and place lowest bit at the highest position of previous block.
-                while (++j < num_blocks) {
-                    auto m = ((m_bits[j] & static_cast<block_type>(1)) << (block_width - 1));
-                    m_bits[j - 1] |= m;
-                    m_bits[j] >>= 1;
-                }
-                m_size--;
-
-                total_excess += deleted_bit ? 1 : -1;
-                min_excess = calculate_min_excess();
+                auto deleted_bit = m_bits.remove(i);
+                std::tie(total_excess, min_excess) = calculate_excess_info();
                 return deleted_bit;
             }
 
-            /**
-             * Inserts a bit at position `i` \in [0..size].
-             * @param i
-             * @param b
-             * @return {overflow, high_bit} Whether or not the leaf was previously full and if yes, the high bit that has been pushed out.
-             */
-            [[nodiscard]] std::pair<bool, bool> insert(size_type i, bool b) {
-                // TODO: update total and min excess
-                assert(i <= size());
-                if (i == capacity()) return {true, b};
-                assert(i < capacity());
-                size_type j = i / block_width;
-                size_type k = i % block_width;
+            bool pop_front() {
+                auto deleted_bit = m_bits.pop_front();
 
-                bool highest_bit_is_set = m_bits[j] & bit_mask(block_width - 1);
-                auto lo_mask = lower_bit_mask(k);
-                auto hi_mask = ~lo_mask;
-                assert((lo_mask | hi_mask) == ~(static_cast<block_type>(0)));
-
-                // Leave lower bits and shift up higher bits. x_{B-1} was saved to `highest_bit_is_set`.
-                // [x_0,...,x_{k-1}][x_k,   ...  ,x_{B-1}]
-                // [x_0,...,x_{k-1}][ b ][x_k,...,x_{B-2}]
-                m_bits[j] = (m_bits[j] & lo_mask) | ((m_bits[j] & hi_mask) << 1);
-                if (b) m_bits[j] |= bit_mask(k);
-
-                // Shift up the higher blocks by one position and insert the last bit of previous block at the lowest position.
-                while (++j < num_blocks) {
-                    bool prev_highest_bit_is_set = highest_bit_is_set;
-                    highest_bit_is_set = (m_bits[j] >> (block_width - 1)) & bit_mask(0);
-                    m_bits[j] <<= 1;
-                    if (prev_highest_bit_is_set) m_bits[j] |= bit_mask(0);
+                if (deleted_bit) {
+                    total_excess++;
+                    min_excess = std::min(0, min_excess + 1);
+                } else {
+                    total_excess--;
+                    if (min_excess < 0) {
+                        min_excess = min_excess - 1;
+                    } else {
+                        std::tie(total_excess, min_excess) = calculate_excess_info();
+                    }
                 }
+#ifndef NDEBUG
+                auto [e, m] = calculate_excess_info();
+                assert(total_excess == e);
+                assert(min_excess == m);
+#endif
+                return deleted_bit;
+            }
 
-                if (size() == capacity()) {
+            bool pop_back() {
+                auto deleted_bit = m_bits.pop_back();
+
+                if (deleted_bit) {
                     std::tie(total_excess, min_excess) = calculate_excess_info();
-                    return {true, highest_bit_is_set};
+                } else {
+                    total_excess--;
                 }
-                assert(size() < capacity());
-                m_size++;
+#ifndef NDEBUG
+                auto [e, m] = calculate_excess_info();
+                assert(total_excess == e);
+                assert(min_excess == m);
+#endif
+                return deleted_bit;
+            }
+
+            [[nodiscard]] std::pair<bool, bool> insert(size_type i, bool b) {
+                auto result = m_bits.insert(i, b);
                 std::tie(total_excess, min_excess) = calculate_excess_info();
-                return {false, false};
+                return result;
+            }
+
+            [[nodiscard]] std::pair<bool, bool> push_front(bool b) {
+                auto [overflow, high_bit] = m_bits.push_front(b);
+
+                if (!overflow) {
+                    if (b) {
+                        total_excess--;
+                        min_excess--;
+                    } else {
+                        total_excess++;
+                        min_excess = std::min(min_excess + 1, 0);
+                    }
+                } else {
+                    std::tie(total_excess, min_excess) = calculate_excess_info();
+                }
+#ifndef NDEBUG
+                auto [e, m] = calculate_excess_info();
+                assert(total_excess == e);
+                assert(min_excess == m);
+#endif
+                return {overflow, high_bit};
+            }
+
+            bool push_back(bool b) {
+#ifndef NDEBUG
+                {
+                    auto [e, m] = calculate_excess_info();
+                    assert(total_excess == e);
+                    assert(min_excess == m);
+                }
+#endif
+
+                auto overflow = m_bits.push_back(b);
+
+                if (!overflow) {
+                    if (b) {
+                        total_excess--;
+                        min_excess = std::min(min_excess, total_excess);
+                    } else {
+                        total_excess++;
+                    }
+                }
+#ifndef NDEBUG
+                {
+                    auto [e, m] = calculate_excess_info();
+                    assert(total_excess == e);
+                    assert(min_excess == m);
+                }
+#endif
+                return overflow;
+            }
+
+            void split_into_empty(Leaf &other) {
+                m_bits.split_into_empty(other.m_bits);
+                std::tie(total_excess, min_excess) = calculate_excess_info();
+                std::tie(other.total_excess, other.min_excess) = other.calculate_excess_info();
             }
 
             [[nodiscard]] std::pair<size_type, size_type> forward_search(size_type i, size_type d) const {
                 // NOTE: different definition than slides
                 //       forward_search(i, d) = min {j > i : excess(j+1) - excess(i) = d }
-                assert(-1 <= i && i < size());
-                if (i == -1 && d == 0) return {i, 0};
+                assert(i == left_end || (0 <= i && i < size()));
+#ifndef NDEBUG
+                auto d_original = d;
+#endif
+                if (i == left_end && d == 0) return {i, 0};
 
-                auto excess_i = i >= 0 ? i - 2 * rank1(i) : 0;
-                assert(i < 0 || excess_i == i - 2 * rank1(i));
+                size_type j = 0;
+                if (i != left_end) {
+                    j = i + 1;
+                    d -= (access(i) ? -1 : 1);
+                }
+                assert(i < size() && j <= size());
 
-                size_type j = i;
-                auto excess_jp1 = excess_i + (i >= 0 ? (access(j) ? -1 : 1) : 0);
-                assert(excess_jp1 == (j + 1) - 2 * rank1(j + 1));
+#ifndef NDEBUG
+                auto excess = [&](auto idx) {
+                    idx = std::clamp(idx, 0, size());
+                    return idx - 2 * rank1(idx);
+                };
+#endif
 
-                ++j;
-                // TODO: make more efficient
-                for (; j < size(); ++j) {
-                    excess_jp1 += access(j) ? -1 : 1;
-                    assert(excess_jp1 == (j + 1) - 2 * rank1(j + 1));
-                    if (excess_jp1 - excess_i == d) {
+                if (j == size()) {
+                    assert(excess(j + 1) - excess(i) == d_original - d);
+                    return {right_end, d};
+                }
+                size_type block_idx = j / block_width;
+                assert(block_idx < max_num_blocks);
+
+                // first block
+                for (bool b: BlockBitRange(m_bits.blocks(block_idx), j % block_width,
+                                           std::min(size() - block_idx * block_width, block_width))) {
+                    assert(j < size());
+                    d -= b ? -1 : 1;
+                    if (d == 0) {
+                        assert(excess(j + 1) - excess(i) == d_original);
                         return {j, 0};
                     }
+                    ++j;
                 }
-                return {j, -(excess_jp1 - excess_i - d)};
+                if (j == size()) {
+                    assert(excess(j + 1) - excess(i) == d_original - d);
+                    return {right_end, d};
+                }
+                ++block_idx;
+
+                assert(j < size());
+                assert(j % block_width == 0);
+                assert(j / block_width == block_idx);
+                const size_type last_block_idx = (size() - 1) / block_width;
+                for (; block_idx < last_block_idx; ++block_idx) {
+                    assert(j % block_width == 0);
+                    assert(j / block_width == block_idx);
+
+                    size_type block_ones = std::popcount(m_bits.blocks(block_idx));
+
+                    if (-block_ones <= d || d <= block_width - block_ones) {
+                        // small steps
+                        for (bool b: BlockBitRange(m_bits.blocks(block_idx))) {
+                            d -= b ? -1 : 1;
+                            if (d == 0) {
+                                assert(excess(j + 1) - excess(i) == d_original);
+                                return {j, 0};
+                            }
+                            ++j;
+                        }
+                    } else {
+                        // big step
+                        j += block_width;
+                        d -= block_width - 2 * block_ones;
+                    }
+                }
+                assert(block_idx == last_block_idx);
+
+                // last block
+                auto last_block_num_bits = size() - last_block_idx * block_width;
+                assert(last_block_num_bits == block_width || last_block_num_bits == (size() % block_width));
+                for (bool b: BlockBitRange(m_bits.blocks(block_idx), 0, last_block_num_bits)) {
+                    d -= b ? -1 : 1;
+                    if (d == 0) {
+                        assert(excess(j + 1) - excess(i) == d_original);
+                        return {j, 0};
+                    }
+                    ++j;
+                }
+                assert(j == size());
+                assert(excess(j + 1) - excess(i) == d_original - d);
+                return {right_end, d};
             }
 
             [[nodiscard]] std::pair<size_type, size_type> backward_search(size_type i, size_type d) const {
                 // NOTE: different definition than slides
                 //       forward_search(i, d) = min {j < i : excess(i+1) - excess(j) = d }
-                assert(0 <= i && i <= size());
-                if (i == size() && d == 0) return {i, 0};
+                assert((0 <= i && i < size()) || i == right_end);
+                if (i == right_end && d == 0) return {i, 0};
 
-                auto excess_ip1 = i < size() ? (i + 1) - 2 * rank1(i + 1) : (i) - 2 * rank1(i);
+                auto excess_ip1 = i < size() ? (i + 1) - 2 * rank1(i + 1) : (size() - 2 * rank1(size()));
 
-                size_type j = i;
+                size_type j = i == right_end ? size() : i;
                 auto excess_j = excess_ip1 - (i < size() ? (access(j) ? -1 : 1) : 0);
                 assert(excess_j == j - 2 * rank1(j));
 
                 --j;
-                // TODO: make more efficient
                 for (; j >= 0; --j) {
                     excess_j -= access(j) ? -1 : 1;
                     assert(excess_j == j - 2 * rank1(j));
@@ -293,7 +320,8 @@ namespace ads {
                         return {j, 0};
                     }
                 }
-                return {j, -(excess_ip1 - excess_j - d)};
+                assert(j == -1);
+                return {left_end, -(excess_ip1 - excess_j - d)};
             }
 
             friend std::ostream &operator<<(std::ostream &os, const Leaf &leaf) {
@@ -304,27 +332,13 @@ namespace ads {
                 return os << ")";
             }
 
-            [[nodiscard]] static constexpr block_type bit_mask(size_type i) {
-                // Returns block with bit at position `i` set.
-                assert(i < block_width);
-                return static_cast<block_type>(1) << i;
-            }
-
-            [[nodiscard]] static constexpr block_type lower_bit_mask(size_type i) {
-                // Returns block with all bits at positions less than `i` set.
-                assert(i <= block_width);
-                if (i == block_width)
-                    return ~static_cast<block_type>(0);
-                return (static_cast<block_type>(1) << i) - static_cast<block_type>(1);
-            }
-
             [[nodiscard]] size_type calculate_total_excess() const {
                 auto rank_1 = rank1(size());
                 auto rank_0 = size() - rank_1;
                 return rank_0 - rank_1;
             }
 
-            [[nodiscard]] size_type calculate_min_excess() const {
+            [[nodiscard]] size_type calculate_min_excess_slow() const {
                 // TODO: make more efficient
                 size_type excess = 0;
                 size_type current_min_excess = 0;
@@ -345,7 +359,7 @@ namespace ads {
 
                 auto update_for_block = [&](block_type block, size_type num_bits = block_width) {
                     for (size_type k = 0; k < num_bits; ++k, block >>= 1) {
-                        if (block & bit_mask(0)) {
+                        if (block & Leaf::Bits::bit_mask(0)) {
                             excess--;
                             current_min_excess = std::min(current_min_excess, excess);
                         } else {
@@ -357,33 +371,32 @@ namespace ads {
                 size_type last_block_idx = (size() - 1) / block_width;
 
                 // first block
-                update_for_block(m_bits[0], std::min(size(), block_width));
+                update_for_block(m_bits.blocks(0), std::min(size(), block_width));
 
                 for (size_type j = 1; j < last_block_idx; ++j) {
-                    size_type block_ones = std::popcount(m_bits[j]);
+                    size_type block_ones = std::popcount(m_bits.blocks(j));
                     // check if the worst case (block_ones 1s followed by (block_width - block_ones) zeros) would not
                     // result in an update to the min excess.
                     if (excess - block_ones >= current_min_excess) {
                         excess += block_width - 2 * block_ones;
                     } else {
-                        update_for_block(m_bits[j]);
+                        update_for_block(m_bits.blocks(j));
                     }
                 }
                 if (last_block_idx > 0) {
                     // last block
                     size_type block_num_bits = size() - last_block_idx * block_width;
                     assert(1 <= block_num_bits && block_num_bits <= block_width);
-                    size_type block_ones = std::popcount(m_bits[last_block_idx]);
+                    size_type block_ones = std::popcount(m_bits.blocks(last_block_idx));
                     if (excess - block_ones >= current_min_excess) {
                         excess += block_num_bits - 2 * block_ones;
                     } else {
-                        update_for_block(m_bits[last_block_idx], block_num_bits);
+                        update_for_block(m_bits.blocks(last_block_idx), block_num_bits);
                     }
                 }
 
-
                 assert(excess == size() - 2 * rank1(size()));
-                assert(current_min_excess == calculate_min_excess());
+                assert(current_min_excess == calculate_min_excess_slow());
                 return {excess, current_min_excess};
             }
         };
@@ -501,10 +514,7 @@ namespace ads {
                     return {idx, d_prime};
                 }
             } else {
-                if (i == left_end) { i = -1; }
-                auto [idx, d_prime] = leaf->forward_search(i, d);
-                if (idx == leaf->m_size) { idx = right_end; }
-                return {idx, d_prime};
+                return leaf->forward_search(i, d);
             }
         }
 
@@ -513,16 +523,17 @@ namespace ads {
             if (inner) {
                 auto left_size = inner->left_size;
 
+                assert(i != left_end);
                 if (i < left_size) {
                     return backward_search(inner->left, i, d);
-                } else if (i == right_end){
+                } else if (i == right_end) {
                     if (total_excess(inner->right) - d >= min_excess(inner->right)) { // TODO: check
                         auto [idx, d_prime] = backward_search(inner->right, right_end, d);
                         assert(idx != left_end);
                         idx += left_size;
                         return {idx, d_prime};
                     }
-                    d -= total_excess(inner->left);
+                    d -= total_excess(inner->right);
                     return backward_search(inner->left, right_end, d);
                 } else {
                     auto [idx, d_prime] = backward_search(inner->right, i - left_size, d);
@@ -535,14 +546,12 @@ namespace ads {
                         d_prime -= total_excess(inner->left);
                         return {idx, d_prime};
                     }
+                    assert(idx != left_end);
                     idx += left_size;
                     return {idx, d_prime};
                 }
             } else {
-                if (i == right_end) { i = leaf->size(); }
-                auto [idx, d_prime] = leaf->backward_search(i, d);
-                if (idx == -1) { idx = left_end; }
-                return {idx, d_prime};
+                return leaf->backward_search(i, d);
             }
         }
 
@@ -554,36 +563,24 @@ namespace ads {
          */
         static Inner *split(Leaf *leaf, bool high_bit) {
             assert(leaf->size() == leaf->capacity());
-            static_assert(Leaf::num_blocks > 1);
+            static_assert(Leaf::max_num_blocks > 1);
 
             Leaf *left = leaf;
             Leaf *right = new Leaf;
 
-            // Copy blocks from left to right, starting at the middle of left and the first block of right.
-            size_type k = 0;
-            for (size_type j = Leaf::num_blocks / 2; j < Leaf::num_blocks; ++j, ++k) {
-                right->m_bits[k] = left->m_bits[j];
-                left->m_bits[j] = static_cast<typename Leaf::block_type>(0);
-            }
-            // Adjust the size of both leaves.
-            left->m_size -= k * Leaf::block_width;
-            right->m_size += k * Leaf::block_width;
-            assert(k < Leaf::num_blocks);
+            left->split_into_empty(*right);
+            [[maybe_unused]] auto overflow_ = right->push_back(high_bit);
 
-            // Append `high_bit` to the right leaf.
-            if (high_bit)
-                right->m_bits[k] |= Leaf::bit_mask(0);
-            right->m_size++;
+            assert(!overflow_);
+            assert(left->size() == Leaf::max_num_bits / 2);
+            assert(right->size() == Leaf::max_num_bits / 2 + 1);
 
             auto left_size = left->size();
             auto left_ones = left->rank1(left_size);
-            left->total_excess = left_size - 2 * left_ones;
-            left->min_excess = left->calculate_min_excess();
+            std::tie(left->total_excess, left->min_excess) = left->calculate_excess_info();
 
             auto right_size = right->size();
-            auto right_ones = right->rank1(right_size);
-            right->total_excess = right_size - 2 * right_ones;
-            right->min_excess = right->calculate_min_excess();
+            std::tie(right->total_excess, right->min_excess) = right->calculate_excess_info();
 
             auto total_excess = left->total_excess + right->total_excess;
             auto min_excess = std::min(left->min_excess, left->total_excess + right->min_excess);
@@ -593,7 +590,7 @@ namespace ads {
                     left_size, left_ones,
                     total_excess, min_excess,
                     1};
-            assert(std::get<0>(check_integrity(NodeHandle::inner(new_inner))));
+            assert(std::get<0>(check_integrity(*new_inner)));
             return new_inner;
         }
 
@@ -636,9 +633,9 @@ namespace ads {
                     auto h = std::max<int>(inner->height, height(inner->left) + 1);
                     if (inner->height != h) {
                         inner->height = h;
-                        node = NodeHandle::inner(balance(inner));
-                        assert(std::get<0>(check_integrity(node)));
-                        return {node, true};
+
+                        assert(std::get<0>(check_integrity(*inner)));
+                        return {NodeHandle::inner(balance(inner)), true};
                     }
                 }
                 return {node, false};
@@ -655,7 +652,7 @@ namespace ads {
                     auto h = std::max(inner->height, height(inner->right) + 1);
                     if (inner->height != h) {
                         inner->height = h;
-                        assert(std::get<0>(check_integrity(NodeHandle::inner(inner))));
+                        assert(std::get<0>(check_integrity(*inner)));
                         return {NodeHandle::inner(balance(inner)), true};
                     }
                 }
@@ -707,7 +704,7 @@ namespace ads {
          * @return {root, deleted_bit} the (maybe updated) subtree root and the deleted bit
          */
         static std::pair<NodeHandle, bool> remove_second_level(Inner *a, size_type i) {
-            assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+            assert(std::get<0>(check_integrity(*a)));
             assert(a->height == 2);
 
             // Following cases are distinguished:
@@ -739,8 +736,7 @@ namespace ads {
 
                     update_excess_info_from_children_info(*a);
 
-                    assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                    assert(std::get<0>(check_integrity(*a)));
                     return {NodeHandle::inner(balance(a)), deleted_bit};
                 } else {
                     // 1.2     and the left child is a leaf
@@ -768,8 +764,7 @@ namespace ads {
 
                         update_excess_info_from_children_info(*a);
 
-                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 1.2.2     and the leaf has more than the minimum number of bits.
@@ -782,8 +777,7 @@ namespace ads {
 
                         update_excess_info_from_children_info(*a);
 
-                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
@@ -805,8 +799,7 @@ namespace ads {
 
                     update_excess_info_from_children_info(*a);
 
-                    assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                    assert(std::get<0>(check_integrity(*a)));
                     return {NodeHandle::inner(balance(a)), deleted_bit};
                 } else {
                     // 2.2     and the right child is a leaf
@@ -826,7 +819,7 @@ namespace ads {
                         auto deleted_bit = b_leaf->remove(i);
                         bool moved_bit{};
                         std::tie(a->left, moved_bit) = remove_first_level(c, a->left_size - 1);
-                        [[maybe_unused]] auto [overflow_, high_bit_] = b_leaf->insert(0, moved_bit);
+                        [[maybe_unused]] auto [overflow_, high_bit_] = b_leaf->push_front(moved_bit);
                         assert(!overflow_);
 
                         a->left_size--;
@@ -835,19 +828,18 @@ namespace ads {
 
                         update_excess_info_from_children_info(*a);
 
-                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 2.2.2     and the leaf has more than the minimum number of bits.
                         // Strategy: Directly delete bit from the right child.
                         assert(b_leaf->size() > Leaf::min_num_bits);
+
                         auto deleted_bit = b_leaf->remove(i);
 
                         update_excess_info_from_children_info(*a);
 
-                        assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
-
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
@@ -857,7 +849,7 @@ namespace ads {
 
         static std::pair<NodeHandle, bool> remove_first_level(Inner *a, size_type i) {
             // TODO: update total and min excess
-            assert(std::get<0>(check_integrity(NodeHandle::inner(a))));
+            assert(std::get<0>(check_integrity(*a)));
             assert(a->height == 1);
             //   a
             // b   c
@@ -889,6 +881,7 @@ namespace ads {
 
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
+                        assert(std::get<0>(check_integrity(*leaf)));
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 1.1.2     and the right child has more than the minimum number of bits left.
@@ -898,8 +891,8 @@ namespace ads {
                         assert(c->size() > Leaf::min_num_bits);
 
                         auto deleted_bit = b->remove(i);
-                        auto moved_bit = c->remove(0);
-                        [[maybe_unused]] auto [overflow_, high_bit_] = b->insert(b->size(), moved_bit);
+                        auto moved_bit = c->pop_front();
+                        [[maybe_unused]] auto overflow_ = b->push_back(moved_bit);
                         assert(!overflow_);
 
                         a->left_ones -= deleted_bit;
@@ -908,6 +901,7 @@ namespace ads {
                         a->total_excess = b->total_excess + c->total_excess;
                         a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
 
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
@@ -924,6 +918,7 @@ namespace ads {
                     a->total_excess = b->total_excess + c->total_excess;
                     a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
 
+                    assert(std::get<0>(check_integrity(*a)));
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             } else {
@@ -938,6 +933,8 @@ namespace ads {
 
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
+
+                        assert(std::get<0>(check_integrity(*leaf)));
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 2.1.2     and the left child has more than the minimum number of bits left.
@@ -947,8 +944,9 @@ namespace ads {
                         assert(b->size() > Leaf::min_num_bits);
 
                         auto deleted_bit = c->remove(i - a->left_size);
-                        auto moved_bit = b->remove(b->size() - 1);
-                        c->insert(0, moved_bit);
+                        auto moved_bit = b->pop_back();
+                        [[maybe_unused]] auto [overflow_, high_bit_] = c->push_front(moved_bit);
+                        assert(!overflow_);
 
                         a->left_size--;
                         a->left_ones -= moved_bit;
@@ -956,6 +954,7 @@ namespace ads {
                         a->total_excess = b->total_excess + c->total_excess;
                         a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
 
+                        assert(std::get<0>(check_integrity(*a)));
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
@@ -963,11 +962,13 @@ namespace ads {
                     // Strategy: Directly delete bit from right child.
 
                     assert(c->size() > Leaf::min_num_bits);
+
                     auto deleted_bit = c->remove(i - a->left_size);
 
                     a->total_excess = b->total_excess + c->total_excess;
                     a->min_excess = std::min(b->min_excess, b->total_excess + c->min_excess);
 
+                    assert(std::get<0>(check_integrity(*a)));
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             }
@@ -991,15 +992,10 @@ namespace ads {
 
             if constexpr (Leaf::min_num_bits % Leaf::block_width == 0) {
                 // If the minimum number of bits aligns with block boundaries, we can copy whole blocks.
-                constexpr auto min_num_blocks = Leaf::min_num_bits / Leaf::block_width;
-                size_type k = 0;
-                for (size_type j = min_num_blocks; j < 2 * min_num_blocks; ++j, ++k) {
-                    b->m_bits[j] = c->m_bits[k];
-                }
-                b->m_size += k * Leaf::block_width;
+                b->m_bits.concat_block_aligned(c->m_bits);
             } else {
                 for (size_type j = 0; j < Leaf::min_num_bits; ++j) {
-                    [[maybe_unused]] auto [overflow_, high_bit_] = b->insert(b->size(), c->access(j));
+                    [[maybe_unused]] auto overflow_ = b->push_back(c->access(j));
                     assert(!overflow_);
                 }
             }
@@ -1009,6 +1005,7 @@ namespace ads {
 
             std::tie(b->total_excess, b->min_excess) = b->calculate_excess_info();
 
+            assert(std::get<0>(check_integrity(*b)));
             return b;
         }
 
@@ -1058,7 +1055,7 @@ namespace ads {
             auto [inner, leaf] = node.cast();
             return inner ? std::min(min_excess_explicit(inner->left),
                                     total_excess(inner->left) + min_excess_explicit(inner->right))
-                         : leaf->calculate_min_excess();
+                         : leaf->calculate_min_excess_slow();
         }
 
 #endif
@@ -1144,7 +1141,7 @@ namespace ads {
             b->height = std::max(height(b->left), height(b->right)) + 1;
             c->height = std::max(a->height, b->height) + 1;
 
-            assert(std::get<0>(check_integrity(NodeHandle::inner(c))));
+            assert(std::get<0>(check_integrity(*c)));
             return c;
         }
 
@@ -1176,7 +1173,7 @@ namespace ads {
             b->height = std::max(height(b->left), height(b->right)) + 1;
             c->height = std::max(a->height, b->height) + 1;
 
-            assert(std::get<0>(check_integrity(NodeHandle::inner(c))));
+            assert(std::get<0>(check_integrity(*c)));
             return c;
         }
 
@@ -1200,7 +1197,7 @@ namespace ads {
             a->height = std::max(height(a->left), height(a->right)) + 1;
             b->height = std::max<int>(a->height, height(b->right)) + 1;
 
-            assert(std::get<0>(check_integrity(NodeHandle::inner(b))));
+            assert(std::get<0>(check_integrity(*b)));
             return b;
         }
 
@@ -1219,34 +1216,44 @@ namespace ads {
 
 #ifndef NDEBUG
 
-        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type> check_integrity(NodeHandle node) {
+        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type>
+        check_integrity(NodeHandle node) {
             auto [inner, leaf] = node.cast();
-            if (inner) {
-                auto [left_ok, left_size, left_ones, left_height, left_total_excess, left_min_excess] = check_integrity(
-                        inner->left);
-                auto [right_ok, right_size, right_ones, right_height, right_total_excess, right_min_excess] = check_integrity(
-                        inner->right);
-                auto height = std::max(left_height, right_height) + 1;
-                auto total_excess = left_total_excess + right_total_excess;
-                auto min_excess = std::min(left_min_excess, left_total_excess + right_min_excess);
-                bool ok = left_ok && right_ok
-                          && (inner->left_size == left_size)
-                          && (inner->left_ones == left_ones)
-                          && (inner->height == height)
-                          && (inner->total_excess == total_excess)
-                          && (inner->min_excess == min_excess);
-                return {ok, left_size + right_size, left_ones + right_ones, height, total_excess, min_excess};
-            }
-            if (leaf) {
-                auto size = leaf->size();
-                auto ones = leaf->rank1(leaf->size());
-                auto total_excess = leaf->calculate_total_excess();
-                auto min_excess = leaf->calculate_min_excess();
-                bool ok = (leaf->total_excess == total_excess)
-                          && (leaf->min_excess == min_excess);
-                return {ok, size, ones, height(node), total_excess, min_excess};
-            }
+            if (inner) { return check_integrity(*inner); }
+            if (leaf) { return check_integrity(*leaf); }
             return {false, 0, 0, 0, 0, 0};
+        }
+
+        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type>
+        check_integrity(const Inner &inner) {
+            auto [left_ok, left_size, left_ones, left_height, left_total_excess, left_min_excess] =
+                    check_integrity(inner.left);
+            auto [right_ok, right_size, right_ones, right_height, right_total_excess, right_min_excess] =
+                    check_integrity(inner.right);
+            auto height = std::max(left_height, right_height) + 1;
+            auto total_excess = left_total_excess + right_total_excess;
+            auto min_excess = std::min(left_min_excess, left_total_excess + right_min_excess);
+            bool ok = left_ok && right_ok
+                      && (inner.left_size == left_size)
+                      && (inner.left_ones == left_ones)
+                      && (inner.height == height)
+                      && (inner.total_excess == total_excess)
+                      && (inner.min_excess == min_excess);
+            assert(ok);
+            return {ok, left_size + right_size, left_ones + right_ones, height, total_excess, min_excess};
+        }
+
+        static std::tuple<bool, size_type, size_type, size_type, size_type, size_type>
+        check_integrity(const Leaf &leaf) {
+            auto size = leaf.size();
+            auto ones = leaf.rank1(leaf.size());
+            auto total_excess = leaf.calculate_total_excess();
+            auto min_excess = leaf.calculate_min_excess_slow();
+            //auto [total_excess, min_excess] = leaf.calculate_excess_info();
+            bool ok = (leaf.total_excess == total_excess)
+                      && (leaf.min_excess == min_excess);
+            assert(ok);
+            return {ok, size, ones, 0, total_excess, min_excess};
         }
 
 #endif
@@ -1270,7 +1277,8 @@ namespace ads {
 
 #ifndef NDEBUG
             auto [ok, size, ones, height, total_excess, min_excess] = check_integrity(m_root);
-            assert(ok && (m_bv_size == size)); // && (total_excess == 0) && (min_excess >= 0));
+            assert(ok && (m_bv_size == size));
+            assert((m_bv_size % 2 == 1) || ((total_excess == 0) && (min_excess >= 0)));
 #endif
         }
 
@@ -1282,7 +1290,8 @@ namespace ads {
 
 #ifndef NDEBUG
             auto [ok, size, ones, height, total_excess, min_excess] = check_integrity(m_root);
-            assert(ok && (m_bv_size == size) && (total_excess == 0) && (min_excess >= 0));
+            assert(ok && (m_bv_size == size));
+            assert((m_bv_size % 2 == 1) || ((total_excess == 0) && (min_excess >= 0)));
 #endif
         }
 
@@ -1315,12 +1324,16 @@ namespace ads {
 
         [[nodiscard]] size_type find_close(size_type i) const {
             assert(access(i) == open);
-            return forward_search(m_root, i, 0);
+            auto [idx, d] = forward_search(m_root, i, 0);
+            assert(0 <= idx && idx < size() && d == 0);
+            return idx;
         }
 
         [[nodiscard]] size_type find_open(size_type i) const {
             assert(access(i) == close);
-            return backward_search(m_root, i, 0);
+            auto [idx, d] = backward_search(m_root, i, 0);
+            assert(0 <= idx && idx < size() && d == 0);
+            return idx;
         }
 
         [[nodiscard]] size_type excess(size_type i) const {
@@ -1329,7 +1342,28 @@ namespace ads {
 
         [[nodiscard]] size_type enclose(size_type i) const {
             assert(access(i) == open);
-            return backward_search(m_root, i, 2);
+            auto [idx, d] = backward_search(m_root, i, 2);
+            assert(0 <= idx && idx < size() && d == 0);
+            return idx;
+        }
+
+
+        template<class F>
+        void preorder_map(F f) const {
+            preorder_map(m_root, f);
+        }
+
+        template<class F>
+        void preorder_map(NodeHandle node, F f) const {
+            auto [inner, leaf] = node.cast();
+            if (inner) {
+                preorder_map(inner->left, f);
+                preorder_map(inner->right, f);
+            } else {
+                for (size_type i = 0; i < leaf->size(); ++i) {
+                    f(leaf->access(i));
+                }
+            }
         }
 
 
@@ -1348,31 +1382,56 @@ namespace ads {
         ~BP2() { delete_node(m_root); }
 
         void insertchild(size_type v, size_type i, size_type k) {
-            // TODO
-            auto v_idx = select(v+1, open);
-            assert(access(v_idx) == open);
+            auto v_open_idx = select(v + 1, open);
+            assert(access(v_open_idx) == open);
 
-            assert(false);
+            auto new_node_start = v_open_idx + 1;
+            for (; i > 1; --i) {
+                assert(access(new_node_start) == open);
+                new_node_start = find_close(new_node_start) + 1;
+            }
+            auto new_node_end = new_node_start;
+            for (; k > 0; --k) {
+                new_node_end = find_close(new_node_end) + 1;
+            }
+
+            insert(new_node_start, open);
+            new_node_end++;
+            insert(new_node_end, close);
         }
 
         void deletenode(size_type v) {
             assert(v != 0);
-            // TODO
-            assert(false);
+            auto v_idx = select(v + 1, open);
+            auto v_end_idx = find_close(v_idx);
+
+            remove(v_idx);
+            v_end_idx--;
+            remove(v_end_idx);
         }
 
         size_type ith_child(size_type v, size_type i) {
-            // TODO
-            assert(false);
-            return 0;
+            auto v_idx = select(v + 1, open);
+            auto child_idx = v_idx + 1;
+            for (; i > 1; --i) {
+                assert(access(child_idx) == open);
+                child_idx = find_close(child_idx) + 1;
+            }
+            assert(access(child_idx) == open);
+            auto child = rank(child_idx, open);
+            return child;
         }
 
         size_type parent(size_type v) {
-            return enclose(v);
+            auto v_idx = select(v + 1, open);
+            auto p_idx = enclose(v_idx);
+            auto p = rank(p_idx, open);
+            return p;
         }
 
         size_type subtree_size(size_type v) {
-            return (find_close(v) - v + 1) / 2;
+            auto v_idx = select(v + 1, open);
+            return (find_close(v_idx) - v_idx + 1) / 2;
         }
 
 
@@ -1387,6 +1446,29 @@ namespace ads {
 
         [[nodiscard]] size_type num_nodes() const {
             return m_bv_size / 2;
+        }
+
+        [[nodiscard]] std::vector<size_type> preorder_degree_sequence() const {
+            std::vector<size_type> degrees(num_nodes());
+            std::vector<size_type> path;
+
+            size_type v = 0;
+            preorder_map([&](bool b) {
+                if (v == 0) {
+                    path.push_back(v);
+                    ++v;
+                    return;
+                }
+                if (b == open) {
+                    degrees[v]++;
+                    degrees[path.back()]++;
+                    path.push_back(v);
+                    ++v;
+                } else {
+                    path.pop_back();
+                }
+            });
+            return degrees;
         }
 
     private:

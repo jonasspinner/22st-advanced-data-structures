@@ -11,7 +11,7 @@ namespace ads {
         static_assert(sizeof(uintptr_t) == sizeof(void *));
         static_assert(!std::is_same_v<A, B>);
     private:
-        explicit TaggedPointer(void *ptr) : m_ptr(ptr) {
+        constexpr explicit TaggedPointer(void *ptr) : m_ptr(ptr) {
 #ifdef NDEBUG
             static_assert(sizeof(TaggedPointer) == sizeof(void *));
 #endif
@@ -21,7 +21,7 @@ namespace ads {
         }
 
     public:
-        [[nodiscard]] static TaggedPointer first(A *ptr) {
+        [[nodiscard]] constexpr static TaggedPointer first(A *ptr) {
             assert(ptr);
             TaggedPointer p(ptr);
 #ifndef NDEBUG
@@ -30,7 +30,7 @@ namespace ads {
             return p;
         }
 
-        [[nodiscard]] static TaggedPointer second(B *ptr) {
+        [[nodiscard]] constexpr static TaggedPointer second(B *ptr) {
             assert(ptr);
             TaggedPointer p(as_tagged(ptr));
 #ifndef NDEBUG
@@ -39,11 +39,11 @@ namespace ads {
             return p;
         }
 
-        explicit operator bool() const {
+        constexpr explicit operator bool() const {
             return as_untagged(m_ptr) != nullptr;
         }
 
-        [[nodiscard]] std::pair<A *, B *> cast() {
+        [[nodiscard]] constexpr std::pair<A *, B *> cast() {
             if (is_tagged(m_ptr)) {
                 return {nullptr, static_cast<B *>(as_untagged(m_ptr))};
             } else {
@@ -51,7 +51,7 @@ namespace ads {
             }
         }
 
-        [[nodiscard]] std::pair<const A *, const B *> cast() const {
+        [[nodiscard]] constexpr std::pair<const A *, const B *> cast() const {
             if (is_tagged(m_ptr)) {
                 return {nullptr, static_cast<const B *>(as_untagged(m_ptr))};
             } else {
@@ -60,15 +60,15 @@ namespace ads {
         }
 
     private:
-        [[nodiscard]] static bool is_tagged(void *ptr) {
+        [[nodiscard]] constexpr static bool is_tagged(void *ptr) {
             return reinterpret_cast<uintptr_t>(ptr) & mask;
         }
 
-        [[nodiscard]] static void *as_untagged(void *ptr) {
+        [[nodiscard]] constexpr static void *as_untagged(void *ptr) {
             return reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(ptr) & ~mask);
         }
 
-        [[nodiscard]] static void *as_tagged(void *ptr) {
+        [[nodiscard]] constexpr static void *as_tagged(void *ptr) {
             return reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(ptr) | mask);
         }
 
