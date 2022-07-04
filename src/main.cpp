@@ -58,12 +58,12 @@ namespace ads {
 
         auto t2 = std::chrono::steady_clock::now();
         auto time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
-        std::cout << "RESULT "
-                  << "algo=bv "
-                  << "name=<jonas_spinner> "
-                  << "constructor<" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "> "
-                  << "time=<" << time.count() << "> "
-                  << "space=<" << bv.required_bits_upperbound() << ">\n";
+        std::cout << "RESULT"
+                  << " algo=bv"
+                  << " name=jonas_spinner"
+                  << " constructor=" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+                  << " time=" << time.count()
+                  << " space=" << bv.required_bits_upperbound() << "\n";
     }
 
     void bp(const std::string &input_file, const std::string &output_file) {
@@ -93,11 +93,11 @@ namespace ads {
 
         auto t1 = std::chrono::steady_clock::now();
         auto time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-        std::cout << "RESULT "
-                  << "algo=bp "
-                  << "name=<jonas_spinner> "
-                  << "time=<" << time.count() << "> "
-                  << "space=<" << bp.required_bits_upperbound() << ">\n";
+        std::cout << "RESULT"
+                  << " algo=bp"
+                  << " name=jonas_spinner"
+                  << " time=" << time.count()
+                  << " space=" << bp.required_bits_upperbound() << "\n";
     }
 
 }
