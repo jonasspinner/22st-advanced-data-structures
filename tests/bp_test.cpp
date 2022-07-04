@@ -421,8 +421,8 @@ namespace ads {
         ASSERT_EQ(bp.ith_child(1, 1), 2);
         ASSERT_EQ(bp.ith_child(3, 1), 4);
 
-        std::vector<size_type> degrees = {3, 2, 1, 2, 1, 1};
-        ASSERT_EQ(bp.preorder_degree_sequence(), degrees);
+        std::vector<size_type> degrees = {3, 1, 0, 1, 0, 0};
+        ASSERT_EQ(bp.preorder_out_degree_sequence(), degrees);
     }
 
 

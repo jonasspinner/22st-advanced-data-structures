@@ -1421,7 +1421,7 @@ namespace ads {
             return m_bv_size / 2;
         }
 
-        [[nodiscard]] std::vector<size_type> preorder_degree_sequence() const {
+        [[nodiscard]] std::vector<size_type> preorder_out_degree_sequence() const {
             std::vector<size_type> degrees(num_nodes());
             std::vector<size_type> path;
 
@@ -1433,7 +1433,6 @@ namespace ads {
                     return;
                 }
                 if (b == open) {
-                    degrees[v]++;
                     degrees[path.back()]++;
                     path.push_back(v);
                     ++v;
