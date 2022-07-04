@@ -3,65 +3,12 @@
 #include <bitset>
 
 #include "BP.h"
-#include "BP2.h"
 #include "io.h"
 
 namespace ads {
-    TEST(BPTest, Lecture03) {
-        using ads::BP;
-
-        /*
-        BP bp;
-        bp.insertchild(0, 2, 1);
-        bp.insertchild(0, 3, 0);
-        bp.insertchild(0, 2, 3);
-         */
-    }
-
-    TEST(BPTest, ExerciseSheet) {
-        using ads::BP;
-
-        BP bp;
-        auto &bv = bp.bv;
-        ASSERT_EQ(bv.access(0), false);
-        ASSERT_EQ(bv.access(1), true);
-        bv.remove(1);
-        bv.remove(0);
-        for (bool b: {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1}) {
-            bv.insert(bp.bv.size(), b);
-        }
-        ASSERT_EQ(bv.rank(bv.size(), false), bv.rank(bv.size(), true));
-
-        ASSERT_EQ(bp.open_parenthesis_for_node(0), 0);
-        ASSERT_EQ(bp.open_parenthesis_for_node(1), 1);
-        ASSERT_EQ(bp.open_parenthesis_for_node(2), 3);
-        ASSERT_EQ(bp.open_parenthesis_for_node(3), 4);
-        ASSERT_EQ(bp.open_parenthesis_for_node(4), 6);
-        ASSERT_EQ(bp.open_parenthesis_for_node(5), 7);
-        ASSERT_EQ(bp.open_parenthesis_for_node(6), 9);
-        ASSERT_EQ(bp.open_parenthesis_for_node(7), 13);
-        ASSERT_EQ(bp.open_parenthesis_for_node(8), 15);
-        ASSERT_EQ(bp.open_parenthesis_for_node(9), 16);
-        ASSERT_EQ(bp.open_parenthesis_for_node(10), 18);
-
-        /*
-        ASSERT_EQ(bp.close_parenthesis_for_node(0), 21);
-        ASSERT_EQ(bp.close_parenthesis_for_node(1), 2);
-        ASSERT_EQ(bp.close_parenthesis_for_node(2), 12);
-        ASSERT_EQ(bp.close_parenthesis_for_node(3), 5);
-        ASSERT_EQ(bp.close_parenthesis_for_node(4), 11);
-        ASSERT_EQ(bp.close_parenthesis_for_node(5), 8);
-        ASSERT_EQ(bp.close_parenthesis_for_node(6), 10);
-        ASSERT_EQ(bp.close_parenthesis_for_node(7), 14);
-        ASSERT_EQ(bp.close_parenthesis_for_node(8), 20);
-        ASSERT_EQ(bp.close_parenthesis_for_node(9), 17);
-        ASSERT_EQ(bp.close_parenthesis_for_node(10), 19);
-         */
-    }
-
-    TEST(BP2Test, Leaf) {
-        using BP2 = ads::BP2<uint8_t, 2>;
-        using Leaf = BP2::Leaf;
+    TEST(BPTest, Leaf) {
+        using BP = ads::BP<uint8_t, 2>;
+        using Leaf = BP::Leaf;
 
         {
             Leaf leaf;
@@ -96,20 +43,20 @@ namespace ads {
 
 
             // first '(' with that level
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, 0), std::pair(BP2::left_end, 0));
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, 1), std::pair(0, 0));
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, 2), std::pair(1, 0));
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, 3), std::pair(4, 0));
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, 4), std::pair(7, 0));
-            ASSERT_EQ(leaf.forward_search(BP2::left_end, -1), std::pair(BP2::right_end, -1));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, 0), std::pair(BP::left_end, 0));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, 1), std::pair(0, 0));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, 2), std::pair(1, 0));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, 3), std::pair(4, 0));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, 4), std::pair(7, 0));
+            ASSERT_EQ(leaf.forward_search(BP::left_end, -1), std::pair(BP::right_end, -1));
 
             // last '(' with that -level
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, 0), std::pair(BP2::right_end, 0));
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, -1), std::pair(15, 0));
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, -2), std::pair(14, 0));
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, -3), std::pair(11, 0));
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, -4), std::pair(10, 0));
-            ASSERT_EQ(leaf.backward_search(BP2::right_end, 1), std::pair(BP2::left_end, 1));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, 0), std::pair(BP::right_end, 0));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, -1), std::pair(15, 0));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, -2), std::pair(14, 0));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, -3), std::pair(11, 0));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, -4), std::pair(10, 0));
+            ASSERT_EQ(leaf.backward_search(BP::right_end, 1), std::pair(BP::left_end, 1));
 
 
             // closing parenthesis
@@ -157,7 +104,7 @@ namespace ads {
             }
 
 
-            ASSERT_EQ(left.forward_search(BP2::left_end, 0), std::pair(BP2::left_end, 0));
+            ASSERT_EQ(left.forward_search(BP::left_end, 0), std::pair(BP::left_end, 0));
             //ASSERT_EQ(left.forward_search(-1, -1), std::pair(0, 0));
 
             // excess(j+1) - excess(i) = d
@@ -168,32 +115,32 @@ namespace ads {
             // excess(j+1) - excess(i) = d
 
             // closing parenthesis
-            ASSERT_EQ(left.forward_search(0, 0), std::pair(BP2::right_end, -4));
-            ASSERT_EQ(right.forward_search(BP2::left_end, -4), std::pair(7, 0));
+            ASSERT_EQ(left.forward_search(0, 0), std::pair(BP::right_end, -4));
+            ASSERT_EQ(right.forward_search(BP::left_end, -4), std::pair(7, 0));
             ASSERT_EQ(left.forward_search(1, 0), std::pair(2, 0));
-            ASSERT_EQ(left.forward_search(3, 0), std::pair(BP2::right_end, -3));
-            ASSERT_EQ(right.forward_search(BP2::left_end, -3), std::pair(12 - 8, 0));
+            ASSERT_EQ(left.forward_search(3, 0), std::pair(BP::right_end, -3));
+            ASSERT_EQ(right.forward_search(BP::left_end, -3), std::pair(12 - 8, 0));
             ASSERT_EQ(left.forward_search(4, 0), std::pair(5, 0));
-            ASSERT_EQ(left.forward_search(6, 0), std::pair(BP2::right_end, -2));
-            ASSERT_EQ(right.forward_search(BP2::left_end, -2), std::pair(11 - 8, 0));
-            ASSERT_EQ(left.forward_search(7, 0), std::pair(BP2::right_end, -1));
-            ASSERT_EQ(right.forward_search(BP2::left_end, -1), std::pair(8 - 8, 0));
+            ASSERT_EQ(left.forward_search(6, 0), std::pair(BP::right_end, -2));
+            ASSERT_EQ(right.forward_search(BP::left_end, -2), std::pair(11 - 8, 0));
+            ASSERT_EQ(left.forward_search(7, 0), std::pair(BP::right_end, -1));
+            ASSERT_EQ(right.forward_search(BP::left_end, -1), std::pair(8 - 8, 0));
             ASSERT_EQ(right.forward_search(1, 0), std::pair(10 - 8, 0));
             ASSERT_EQ(right.forward_search(13 - 8, 0), std::pair(14 - 8, 0));
 
             // opening parenthesis
             ASSERT_EQ(left.backward_search(2, 0), std::pair(1, 0));
             ASSERT_EQ(left.backward_search(5, 0), std::pair(4, 0));
-            ASSERT_EQ(right.backward_search(8 - 8, 0), std::pair(BP2::left_end, 1));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 1), std::pair(7, 0));
+            ASSERT_EQ(right.backward_search(8 - 8, 0), std::pair(BP::left_end, 1));
+            ASSERT_EQ(left.backward_search(BP::right_end, 1), std::pair(7, 0));
             ASSERT_EQ(right.backward_search(2, 0), std::pair(1, 0));
-            ASSERT_EQ(right.backward_search(11 - 8, 0), std::pair(BP2::left_end, 2));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 2), std::pair(6, 0));
-            ASSERT_EQ(right.backward_search(12 - 8, 0), std::pair(BP2::left_end, 3));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 3), std::pair(3, 0));
+            ASSERT_EQ(right.backward_search(11 - 8, 0), std::pair(BP::left_end, 2));
+            ASSERT_EQ(left.backward_search(BP::right_end, 2), std::pair(6, 0));
+            ASSERT_EQ(right.backward_search(12 - 8, 0), std::pair(BP::left_end, 3));
+            ASSERT_EQ(left.backward_search(BP::right_end, 3), std::pair(3, 0));
             ASSERT_EQ(right.backward_search(14 - 8, 0), std::pair(5, 0));
-            ASSERT_EQ(right.backward_search(15 - 8, 0), std::pair(BP2::left_end, 4));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 4), std::pair(0, 0));
+            ASSERT_EQ(right.backward_search(15 - 8, 0), std::pair(BP::left_end, 4));
+            ASSERT_EQ(left.backward_search(BP::right_end, 4), std::pair(0, 0));
 
             // enclosing parenthesis
             ASSERT_EQ(left.backward_search(1, 2), std::pair(0, 0));
@@ -201,19 +148,19 @@ namespace ads {
             ASSERT_EQ(left.backward_search(4, 2), std::pair(3, 0));
             ASSERT_EQ(left.backward_search(6, 2), std::pair(3, 0));
             ASSERT_EQ(left.backward_search(7, 2), std::pair(6, 0));
-            ASSERT_EQ(right.backward_search(9 - 8, 2), std::pair(BP2::left_end, 2));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 2), std::pair(6, 0));
-            ASSERT_EQ(right.backward_search(13 - 8, 2), std::pair(BP2::left_end, 4));
-            ASSERT_EQ(left.backward_search(BP2::right_end, 4), std::pair(0, 0));
+            ASSERT_EQ(right.backward_search(9 - 8, 2), std::pair(BP::left_end, 2));
+            ASSERT_EQ(left.backward_search(BP::right_end, 2), std::pair(6, 0));
+            ASSERT_EQ(right.backward_search(13 - 8, 2), std::pair(BP::left_end, 4));
+            ASSERT_EQ(left.backward_search(BP::right_end, 4), std::pair(0, 0));
         }
     }
 
-    TEST(BP2Test, Inner) {
-        using BP2 = ads::BP2<>;
-        using Inner = BP2::Inner;
-        using Leaf = BP2::Leaf;
-        using NodeHandle = BP2::NodeHandle;
-        using size_type = BP2::size_type;
+    TEST(BPTest, Inner) {
+        using BP = ads::BP<>;
+        using Inner = BP::Inner;
+        using Leaf = BP::Leaf;
+        using NodeHandle = BP::NodeHandle;
+        using size_type = BP::size_type;
 
         std::array<Leaf, 4> leaves;
         // ab c  d ef g     h   ij k
@@ -239,13 +186,13 @@ namespace ads {
         Inner a_{b, c, 10, 3, 0, 0, 2};
         auto a = NodeHandle::inner(&a_);
 
-        ASSERT_EQ(BP2::access(a, 3), false);
-        ASSERT_EQ(BP2::access(a, 4), false);
-        ASSERT_EQ(BP2::access(a, 9), false);
-        ASSERT_EQ(BP2::access(a, 10), true);
-        ASSERT_EQ(BP2::access(a, 14), true);
-        ASSERT_EQ(BP2::access(a, 15), false);
-        ASSERT_EQ(BP2::access(a, 21), true);
+        ASSERT_EQ(BP::access(a, 3), false);
+        ASSERT_EQ(BP::access(a, 4), false);
+        ASSERT_EQ(BP::access(a, 9), false);
+        ASSERT_EQ(BP::access(a, 10), true);
+        ASSERT_EQ(BP::access(a, 14), true);
+        ASSERT_EQ(BP::access(a, 15), false);
+        ASSERT_EQ(BP::access(a, 21), true);
 
         //  |               0,0                |
         //  |      4,0     |  |    -4,-4       |
@@ -258,85 +205,85 @@ namespace ads {
         //  | +-+|  |      |  |  -+-|  |+    - |
         //  |+   |  |      |  |     |  |      -|
 
-        ASSERT_EQ(leaves[0].forward_search(0, 0), std::pair(BP2::right_end, -2));
-        ASSERT_EQ(leaves[1].forward_search(BP2::left_end, -2), std::pair(BP2::right_end, -4));
-        ASSERT_EQ(leaves[2].forward_search(BP2::left_end, -4), std::pair(BP2::right_end, -1));
-        ASSERT_EQ(leaves[3].forward_search(BP2::left_end, -1), std::pair(6, 0));
+        ASSERT_EQ(leaves[0].forward_search(0, 0), std::pair(BP::right_end, -2));
+        ASSERT_EQ(leaves[1].forward_search(BP::left_end, -2), std::pair(BP::right_end, -4));
+        ASSERT_EQ(leaves[2].forward_search(BP::left_end, -4), std::pair(BP::right_end, -1));
+        ASSERT_EQ(leaves[3].forward_search(BP::left_end, -1), std::pair(6, 0));
 
-        ASSERT_EQ(BP2::forward_search(b, 0, 0), std::pair(BP2::right_end, -4));
-        ASSERT_EQ(BP2::forward_search(b, 1, 0), std::pair(2, 0));
-        ASSERT_EQ(BP2::forward_search(b, 3, 0), std::pair(BP2::right_end, -3));
-        ASSERT_EQ(BP2::forward_search(b, 4, 0), std::pair(5, 0));
-        ASSERT_EQ(BP2::forward_search(b, 6, 0), std::pair(BP2::right_end, -2));
-        ASSERT_EQ(BP2::forward_search(b, 7, 0), std::pair(8, 0));
-        ASSERT_EQ(BP2::forward_search(b, 9, 0), std::pair(BP2::right_end, -1));
+        ASSERT_EQ(BP::forward_search(b, 0, 0), std::pair(BP::right_end, -4));
+        ASSERT_EQ(BP::forward_search(b, 1, 0), std::pair(2, 0));
+        ASSERT_EQ(BP::forward_search(b, 3, 0), std::pair(BP::right_end, -3));
+        ASSERT_EQ(BP::forward_search(b, 4, 0), std::pair(5, 0));
+        ASSERT_EQ(BP::forward_search(b, 6, 0), std::pair(BP::right_end, -2));
+        ASSERT_EQ(BP::forward_search(b, 7, 0), std::pair(8, 0));
+        ASSERT_EQ(BP::forward_search(b, 9, 0), std::pair(BP::right_end, -1));
 
-        ASSERT_EQ(BP2::forward_search(c, 3, 0), std::pair(4, 0));
-        ASSERT_EQ(BP2::forward_search(c, 5, 0), std::pair(10, 0));
-        ASSERT_EQ(BP2::forward_search(c, 6, 0), std::pair(7, 0));
-        ASSERT_EQ(BP2::forward_search(c, 8, 0), std::pair(9, 0));
+        ASSERT_EQ(BP::forward_search(c, 3, 0), std::pair(4, 0));
+        ASSERT_EQ(BP::forward_search(c, 5, 0), std::pair(10, 0));
+        ASSERT_EQ(BP::forward_search(c, 6, 0), std::pair(7, 0));
+        ASSERT_EQ(BP::forward_search(c, 8, 0), std::pair(9, 0));
 
-        ASSERT_EQ(BP2::forward_search(a, 0, 0), std::pair(21, 0));
-        ASSERT_EQ(BP2::forward_search(a, 1, 0), std::pair(2, 0));
-        ASSERT_EQ(BP2::forward_search(a, 3, 0), std::pair(12, 0));
-        ASSERT_EQ(BP2::forward_search(a, 4, 0), std::pair(5, 0));
-        ASSERT_EQ(BP2::forward_search(a, 6, 0), std::pair(11, 0));
-        ASSERT_EQ(BP2::forward_search(a, 7, 0), std::pair(8, 0));
-        ASSERT_EQ(BP2::forward_search(a, 9, 0), std::pair(10, 0));
-        ASSERT_EQ(BP2::forward_search(a, 13, 0), std::pair(14, 0));
-        ASSERT_EQ(BP2::forward_search(a, 15, 0), std::pair(20, 0));
-        ASSERT_EQ(BP2::forward_search(a, 16, 0), std::pair(17, 0));
-        ASSERT_EQ(BP2::forward_search(a, 18, 0), std::pair(19, 0));
+        ASSERT_EQ(BP::forward_search(a, 0, 0), std::pair(21, 0));
+        ASSERT_EQ(BP::forward_search(a, 1, 0), std::pair(2, 0));
+        ASSERT_EQ(BP::forward_search(a, 3, 0), std::pair(12, 0));
+        ASSERT_EQ(BP::forward_search(a, 4, 0), std::pair(5, 0));
+        ASSERT_EQ(BP::forward_search(a, 6, 0), std::pair(11, 0));
+        ASSERT_EQ(BP::forward_search(a, 7, 0), std::pair(8, 0));
+        ASSERT_EQ(BP::forward_search(a, 9, 0), std::pair(10, 0));
+        ASSERT_EQ(BP::forward_search(a, 13, 0), std::pair(14, 0));
+        ASSERT_EQ(BP::forward_search(a, 15, 0), std::pair(20, 0));
+        ASSERT_EQ(BP::forward_search(a, 16, 0), std::pair(17, 0));
+        ASSERT_EQ(BP::forward_search(a, 18, 0), std::pair(19, 0));
 
 
         //   (()(    ()(()(    )))()    (()()))
         //   0123    456789    01234    5678901
         //   0123    012345    01234    0123456
-        ASSERT_EQ(leaves[3].backward_search(6, 0), std::pair(BP2::left_end, 1));
-        ASSERT_EQ(leaves[2].backward_search(BP2::right_end, 1), std::pair(BP2::left_end, 4));
-        ASSERT_EQ(leaves[1].backward_search(BP2::right_end, 4), std::pair(BP2::left_end, 2));
-        ASSERT_EQ(leaves[0].backward_search(BP2::right_end, 2), std::pair(0, 0));
+        ASSERT_EQ(leaves[3].backward_search(6, 0), std::pair(BP::left_end, 1));
+        ASSERT_EQ(leaves[2].backward_search(BP::right_end, 1), std::pair(BP::left_end, 4));
+        ASSERT_EQ(leaves[1].backward_search(BP::right_end, 4), std::pair(BP::left_end, 2));
+        ASSERT_EQ(leaves[0].backward_search(BP::right_end, 2), std::pair(0, 0));
 
-        ASSERT_EQ(BP2::backward_search(b, 2, 0), std::pair(1, 0));
-        ASSERT_EQ(BP2::backward_search(b, 5, 0), std::pair(4, 0));
-        ASSERT_EQ(BP2::backward_search(b, 8, 0), std::pair(7, 0));
-        ASSERT_EQ(BP2::backward_search(b, BP2::right_end, 4), std::pair(0, 0));
-        ASSERT_EQ(BP2::backward_search(b, BP2::right_end, 3), std::pair(3, 0));
-        ASSERT_EQ(BP2::backward_search(b, BP2::right_end, 2), std::pair(6, 0));
-        ASSERT_EQ(BP2::backward_search(b, BP2::right_end, 1), std::pair(9, 0));
+        ASSERT_EQ(BP::backward_search(b, 2, 0), std::pair(1, 0));
+        ASSERT_EQ(BP::backward_search(b, 5, 0), std::pair(4, 0));
+        ASSERT_EQ(BP::backward_search(b, 8, 0), std::pair(7, 0));
+        ASSERT_EQ(BP::backward_search(b, BP::right_end, 4), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(b, BP::right_end, 3), std::pair(3, 0));
+        ASSERT_EQ(BP::backward_search(b, BP::right_end, 2), std::pair(6, 0));
+        ASSERT_EQ(BP::backward_search(b, BP::right_end, 1), std::pair(9, 0));
 
-        ASSERT_EQ(BP2::backward_search(c, 0, 0), std::pair(BP2::left_end, 1));
-        ASSERT_EQ(BP2::backward_search(c, 1, 0), std::pair(BP2::left_end, 2));
-        ASSERT_EQ(BP2::backward_search(c, 2, 0), std::pair(BP2::left_end, 3));
-        ASSERT_EQ(BP2::backward_search(c, 4, 0), std::pair(3, 0));
-        ASSERT_EQ(BP2::backward_search(c, 7, 0), std::pair(6, 0));
-        ASSERT_EQ(BP2::backward_search(c, 9, 0), std::pair(8, 0));
-        ASSERT_EQ(BP2::backward_search(c, 10, 0), std::pair(5, 0));
-        ASSERT_EQ(BP2::backward_search(c, 11, 0), std::pair(BP2::left_end, 4));
+        ASSERT_EQ(BP::backward_search(c, 0, 0), std::pair(BP::left_end, 1));
+        ASSERT_EQ(BP::backward_search(c, 1, 0), std::pair(BP::left_end, 2));
+        ASSERT_EQ(BP::backward_search(c, 2, 0), std::pair(BP::left_end, 3));
+        ASSERT_EQ(BP::backward_search(c, 4, 0), std::pair(3, 0));
+        ASSERT_EQ(BP::backward_search(c, 7, 0), std::pair(6, 0));
+        ASSERT_EQ(BP::backward_search(c, 9, 0), std::pair(8, 0));
+        ASSERT_EQ(BP::backward_search(c, 10, 0), std::pair(5, 0));
+        ASSERT_EQ(BP::backward_search(c, 11, 0), std::pair(BP::left_end, 4));
 
 
-        ASSERT_EQ(BP2::backward_search(a, 2, 0), std::pair(1, 0));
-        ASSERT_EQ(BP2::backward_search(a, 5, 0), std::pair(4, 0));
-        ASSERT_EQ(BP2::backward_search(a, 8, 0), std::pair(7, 0));
-        ASSERT_EQ(BP2::backward_search(a, 10, 0), std::pair(9, 0));
-        ASSERT_EQ(BP2::backward_search(a, 11, 0), std::pair(6, 0));
-        ASSERT_EQ(BP2::backward_search(a, 12, 0), std::pair(3, 0));
-        ASSERT_EQ(BP2::backward_search(a, 14, 0), std::pair(13, 0));
-        ASSERT_EQ(BP2::backward_search(a, 17, 0), std::pair(16, 0));
-        ASSERT_EQ(BP2::backward_search(a, 19, 0), std::pair(18, 0));
-        ASSERT_EQ(BP2::backward_search(a, 20, 0), std::pair(15, 0));
-        ASSERT_EQ(BP2::backward_search(a, 21, 0), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(a, 2, 0), std::pair(1, 0));
+        ASSERT_EQ(BP::backward_search(a, 5, 0), std::pair(4, 0));
+        ASSERT_EQ(BP::backward_search(a, 8, 0), std::pair(7, 0));
+        ASSERT_EQ(BP::backward_search(a, 10, 0), std::pair(9, 0));
+        ASSERT_EQ(BP::backward_search(a, 11, 0), std::pair(6, 0));
+        ASSERT_EQ(BP::backward_search(a, 12, 0), std::pair(3, 0));
+        ASSERT_EQ(BP::backward_search(a, 14, 0), std::pair(13, 0));
+        ASSERT_EQ(BP::backward_search(a, 17, 0), std::pair(16, 0));
+        ASSERT_EQ(BP::backward_search(a, 19, 0), std::pair(18, 0));
+        ASSERT_EQ(BP::backward_search(a, 20, 0), std::pair(15, 0));
+        ASSERT_EQ(BP::backward_search(a, 21, 0), std::pair(0, 0));
 
-        ASSERT_EQ(BP2::backward_search(a, 1, 2), std::pair(0, 0));
-        ASSERT_EQ(BP2::backward_search(a, 3, 2), std::pair(0, 0));
-        ASSERT_EQ(BP2::backward_search(a, 4, 2), std::pair(3, 0));
-        ASSERT_EQ(BP2::backward_search(a, 6, 2), std::pair(3, 0));
-        ASSERT_EQ(BP2::backward_search(a, 7, 2), std::pair(6, 0));
-        ASSERT_EQ(BP2::backward_search(a, 9, 2), std::pair(6, 0));
-        ASSERT_EQ(BP2::backward_search(a, 13, 2), std::pair(0, 0));
-        ASSERT_EQ(BP2::backward_search(a, 15, 2), std::pair(0, 0));
-        ASSERT_EQ(BP2::backward_search(a, 16, 2), std::pair(15, 0));
-        ASSERT_EQ(BP2::backward_search(a, 18, 2), std::pair(15, 0));
+        ASSERT_EQ(BP::backward_search(a, 1, 2), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(a, 3, 2), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(a, 4, 2), std::pair(3, 0));
+        ASSERT_EQ(BP::backward_search(a, 6, 2), std::pair(3, 0));
+        ASSERT_EQ(BP::backward_search(a, 7, 2), std::pair(6, 0));
+        ASSERT_EQ(BP::backward_search(a, 9, 2), std::pair(6, 0));
+        ASSERT_EQ(BP::backward_search(a, 13, 2), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(a, 15, 2), std::pair(0, 0));
+        ASSERT_EQ(BP::backward_search(a, 16, 2), std::pair(15, 0));
+        ASSERT_EQ(BP::backward_search(a, 18, 2), std::pair(15, 0));
 
         {
             Leaf leaf;
@@ -347,18 +294,18 @@ namespace ads {
                 [[maybe_unused]] auto r = leaf.insert(leaf.size(), b);
             }
 
-            ASSERT_EQ(leaf.forward_search(0, 0), std::pair(BP2::right_end, -4));
+            ASSERT_EQ(leaf.forward_search(0, 0), std::pair(BP::right_end, -4));
         }
     }
 
-    TEST(BP2Test, BVInsert) {
-        using BP2 = ads::BP2<>;
-        using size_type = BP2::size_type;
+    TEST(BPTest, BVInsert) {
+        using BP = ads::BP<>;
+        using size_type = BP::size_type;
 
-        auto open = BP2::open;
-        auto close = BP2::close;
+        auto open = BP::open;
+        auto close = BP::close;
 
-        BP2 bp;
+        BP bp;
 
         std::mt19937_64 gen;
         size_t n = 1000;
@@ -385,11 +332,11 @@ namespace ads {
         ASSERT_EQ(bp.size(), 8 * n + 2);
     }
 
-    TEST(BP2Test, Insert) {
-        using BP2 = ads::BP2<>;
-        using size_type = BP2::size_type;
-        auto open = BP2::open;
-        auto close = BP2::close;
+    TEST(BPTest, Insert) {
+        using BP = ads::BP<>;
+        using size_type = BP::size_type;
+        auto open = BP::open;
+        auto close = BP::close;
 
         auto eq = [](const auto &v, uint64_t x, int size) {
             if (v.size() != size) return false;
@@ -404,7 +351,7 @@ namespace ads {
             return true;
         };
 
-        BP2 bp;
+        BP bp;
 
         bp.insertchild(0, 1, 0);
         ASSERT_TRUE(eq(bp, 0b0011, 4));
@@ -479,13 +426,13 @@ namespace ads {
     }
 
 
-    TEST(BP2Test, RandomOps) {
-        using BP2 = ads::BP2<uint8_t, 2>;
-        using size_type = BP2::size_type;
-        auto open = BP2::open;
-        auto close = BP2::close;
+    TEST(BPTest, RandomOps) {
+        using BP = ads::BP<uint8_t, 2>;
+        using size_type = BP::size_type;
+        auto open = BP::open;
+        auto close = BP::close;
 
-        BP2 bp;
+        BP bp;
 
         std::mt19937_64 gen;
         size_t n = 1000;
@@ -521,11 +468,11 @@ namespace ads {
         ASSERT_EQ(bp.num_nodes(), 1);
     }
 
-    TEST(BP2Test, InsertIthChild) {
-        using BP2 = ads::BP2<>;
-        using size_type = BP2::size_type;
-        auto open = BP2::open;
-        auto close = BP2::close;
+    TEST(BPTest, InsertIthChild) {
+        using BP = ads::BP<>;
+        using size_type = BP::size_type;
+        auto open = BP::open;
+        auto close = BP::close;
 
         constexpr auto ins = ads::bp_operation_kind::insertchild;
         std::vector<ads::bp_operation> operations = {
@@ -543,7 +490,7 @@ namespace ads {
                 {ins, 0, 2, 0}
         };
 
-        BP2 bp;
+        BP bp;
         for (auto [_, v, i, k]: operations) {
             bp.insertchild(v, i, k);
         }

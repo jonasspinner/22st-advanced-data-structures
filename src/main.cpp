@@ -5,7 +5,7 @@
 #include "commandline.h"
 
 #include "DynamicBitVector.h"
-#include "BP2.h"
+#include "BP.h"
 
 namespace ads {
     void bv_io() {
@@ -75,7 +75,7 @@ namespace ads {
 
         auto t0 = std::chrono::steady_clock::now();
 
-        ads::BP2<uint64_t, 64> bp;
+        ads::BP<uint64_t, 64> bp;
 
         int iterations = 0;
         for (auto operation: operations) {

@@ -1,7 +1,7 @@
 #include <benchmark/benchmark.h>
 #include <random>
 
-#include "BP2.h"
+#include "BP.h"
 
 template <class BlockType, size_t NumBlocks>
 static void BM_ForwardSearch(benchmark::State& state) {
@@ -11,7 +11,7 @@ static void BM_ForwardSearch(benchmark::State& state) {
     std::uniform_int_distribution<BlockType> block_dist(std::numeric_limits<block_type>::min(), std::numeric_limits<block_type>::max());
     std::array<block_type, num_blocks> bits{};
 
-    using Leaf = typename ads::BP2<block_type, num_blocks>::Leaf;
+    using Leaf = typename ads::BP<block_type, num_blocks>::Leaf;
 
     std::minstd_rand gen;
 

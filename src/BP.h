@@ -1,5 +1,5 @@
-#ifndef ADVANCED_DATA_STRUCTURES_BP2_H
-#define ADVANCED_DATA_STRUCTURES_BP2_H
+#ifndef ADVANCED_DATA_STRUCTURES_BP_H
+#define ADVANCED_DATA_STRUCTURES_BP_H
 
 #include <cstdint>
 #include <array>
@@ -17,7 +17,7 @@
 
 namespace ads {
     template<class BlockType = uint64_t, size_t NumBlocks = 64>
-    class BP2 {
+    class BP {
         static_assert(std::is_unsigned_v<BlockType>);
     public:
         using size_type = int32_t;
@@ -1368,18 +1368,18 @@ namespace ads {
 
 
     public:
-        BP2() : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
+        BP() : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
             insert(size(), open);
             insert(size(), close);
         }
 
-        explicit BP2(const std::vector<bool> &bits) : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
+        explicit BP(const std::vector<bool> &bits) : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
             for (auto bit: bits) {
                 insert(size(), bit);
             }
         }
 
-        ~BP2() { delete_node(m_root); }
+        ~BP() { delete_node(m_root); }
 
         void insertchild(size_type v, size_type i, size_type k) {
             auto v_open_idx = select(v + 1, open);
@@ -1435,7 +1435,7 @@ namespace ads {
         }
 
 
-        friend std::ostream &operator<<(std::ostream &os, const BP2 &bv) {
+        friend std::ostream &operator<<(std::ostream &os, const BP &bv) {
             print(os, bv.m_root, 0);
             return os;
         }
@@ -1485,19 +1485,19 @@ namespace ads {
             }
         }
 
-        FRIEND_TEST(BP2Test, Leaf);
+        FRIEND_TEST(BPTest, Leaf);
 
-        FRIEND_TEST(BP2Test, Inner);
+        FRIEND_TEST(BPTest, Inner);
 
-        FRIEND_TEST(BP2Test, Insert);
+        FRIEND_TEST(BPTest, Insert);
 
-        FRIEND_TEST(BP2Test, Remove);
+        FRIEND_TEST(BPTest, Remove);
 
-        FRIEND_TEST(BP2Test, BVInsert);
+        FRIEND_TEST(BPTest, BVInsert);
 
         NodeHandle m_root;
         size_type m_bv_size;
     };
 }
 
-#endif //ADVANCED_DATA_STRUCTURES_BP2_H
+#endif //ADVANCED_DATA_STRUCTURES_BP_H
