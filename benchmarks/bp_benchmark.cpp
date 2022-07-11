@@ -35,10 +35,86 @@ static void BM_ForwardSearch(benchmark::State& state) {
         auto [idx, d_prime] = leaf.forward_search(i, 0);
         benchmark::DoNotOptimize(idx);
         num_tries++;
-        if (idx == -1 || idx == leaf.size()) { num_fails++; }
+        if (idx < 0 || leaf.size() <= idx) { num_fails++; }
     }
-    std::cout << num_tries << " " << num_fails << std::endl;
 }
+BENCHMARK(BM_ForwardSearch<uint64_t, 4>);
+BENCHMARK(BM_ForwardSearch<uint64_t, 8>);
+BENCHMARK(BM_ForwardSearch<uint64_t, 16>);
+BENCHMARK(BM_ForwardSearch<uint64_t, 32>);
 BENCHMARK(BM_ForwardSearch<uint64_t, 64>);
+BENCHMARK(BM_ForwardSearch<uint64_t, 128>);
+
+
+template <class BP>
+BP build_random_inserts_bp_tree(int n) {
+    std::minstd_rand gen;
+    BP bp;
+    for (int i = 0; i < n; ++i) {
+        std::uniform_int_distribution<int> vertex_dist(0, bp.num_nodes() - 1);
+        bp.insertchild(vertex_dist(gen), 1, 0);
+    }
+    return bp;
+}
+
+
+
+template <class BP>
+static void BM_InsertChild(benchmark::State& state) {
+    int n = state.range(0);
+    std::minstd_rand gen;
+    std::bernoulli_distribution bit_dist;
+
+    BP bp = build_random_inserts_bp_tree<BP>(n);
+
+    for (auto _ : state) {
+        std::uniform_int_distribution<int> vertex_dist(0, bp.num_nodes() - 1);
+        bp.insertchild(vertex_dist(gen), 1, 0);
+        if (bp.num_nodes() == n + 128) {
+            state.PauseTiming();
+            for (int i = 0; i < 128; ++i) {
+                auto v = std::clamp(vertex_dist(gen), 1, n-1);
+                bp.deletenode(v);
+            }
+            state.ResumeTiming();
+        }
+    }
+}
+//BENCHMARK(BM_Insert<ads::BP<uint8_t, 2>>)->RangeMultiplier(2)->Range(8, 1<<22);
+//BENCHMARK(BM_Insert<ads::BP<uint8_t, 128>>)->RangeMultiplier(2)->Range(8, 1<<22);
+BENCHMARK(BM_InsertChild<ads::BP<uint64_t, 2>>)->RangeMultiplier(2)->Range(8, 1<<22);
+BENCHMARK(BM_InsertChild<ads::BP<uint64_t, 4>>)->RangeMultiplier(2)->Range(8, 1<<22);
+BENCHMARK(BM_InsertChild<ads::BP<uint64_t, 8>>)->RangeMultiplier(2)->Range(8, 1<<22);
+BENCHMARK(BM_InsertChild<ads::BP<uint64_t, 16>>)->RangeMultiplier(2)->Range(8, 1<<22);
+
+template <class BP>
+static void BM_DeleteNode(benchmark::State& state) {
+    int n = state.range(0);
+    std::minstd_rand gen;
+    std::bernoulli_distribution bit_dist;
+
+    BP bp = build_random_inserts_bp_tree<BP>(n);
+
+    for (auto _ : state) {
+        std::uniform_int_distribution<int> vertex_dist(1, bp.num_nodes() - 1);
+        if (bp.num_nodes() == n) {
+            state.PauseTiming();
+            for (int i = 0; i < 128; ++i) {
+                bp.insertchild(vertex_dist(gen), 1, 0);
+            }
+            state.ResumeTiming();
+        }
+        bp.deletenode(vertex_dist(gen));
+    }
+}
+
+//BENCHMARK(BM_DeleteNode<ads::BP<uint8_t, 2>>)->RangeMultiplier(2)->Range(8, 1<<22);
+//BENCHMARK(BM_DeleteNode<ads::BP<uint8_t, 128>>)->RangeMultiplier(2)->Range(8, 1<<22);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 2>>)->RangeMultiplier(2)->Range(8, 1<<20);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 4>>)->RangeMultiplier(2)->Range(8, 1<<20);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 8>>)->RangeMultiplier(2)->Range(8, 1<<20);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 16>>)->RangeMultiplier(2)->Range(8, 1<<20);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 32>>)->RangeMultiplier(2)->Range(8, 1<<20);
+BENCHMARK(BM_DeleteNode<ads::BP<uint64_t, 64>>)->RangeMultiplier(2)->Range(8, 1<<20);
 
 BENCHMARK_MAIN();
