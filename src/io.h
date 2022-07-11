@@ -139,6 +139,9 @@ namespace ads {
     enum class bp_operation_kind {
         insertchild,
         deletenode,
+        child,
+        subtree_size,
+        parent,
     };
     struct bp_operation {
         bp_operation_kind kind{};
@@ -154,6 +157,12 @@ std::ostream &operator<<(std::ostream &os, ads::bp_operation_kind kind) {
         os << "insertchild";
     } else if (kind == bp_operation_kind::deletenode) {
         os << "deletenode";
+    } else if (kind == bp_operation_kind::child) {
+        os << "child";
+    } else if (kind == bp_operation_kind::subtree_size) {
+        os << "subtree_size";
+    } else if (kind == bp_operation_kind::parent) {
+        os << "parent";
     } else {
         os.setstate(std::ios_base::failbit);
     }
@@ -168,6 +177,12 @@ std::istream &operator>>(std::istream &is, ads::bp_operation_kind &kind) {
         kind = ads::bp_operation_kind::insertchild;
     } else if (s == "deletenode") {
         kind = ads::bp_operation_kind::deletenode;
+    } else if (s == "child") {
+        kind = ads::bp_operation_kind::child;
+    } else if (s == "subtree_size") {
+        kind = ads::bp_operation_kind::subtree_size;
+    } else if (s == "parent") {
+        kind = ads::bp_operation_kind::parent;
     } else {
         is.setstate(std::ios_base::failbit);
     }
@@ -181,7 +196,12 @@ std::ostream &operator<<(std::ostream &os, ads::bp_operation operation) {
         case bp_operation_kind::insertchild:
             os << ' ' << operation.i << ' ' << operation.k;
             break;
+        case bp_operation_kind::child:
+            os << ' ' << operation.i;
+            break;
         case bp_operation_kind::deletenode:
+        case bp_operation_kind::subtree_size:
+        case bp_operation_kind::parent:
             break;
         default:
             os.setstate(std::ios_base::failbit);
@@ -196,7 +216,12 @@ std::istream &operator>>(std::istream &is, ads::bp_operation &operation) {
         case bp_operation_kind::insertchild:
             is >> operation.i >> operation.k;
             break;
+        case bp_operation_kind::child:
+            is >> operation.i;
+            break;
         case bp_operation_kind::deletenode:
+        case bp_operation_kind::subtree_size:
+        case bp_operation_kind::parent:
             break;
         default:
             is.setstate(std::ios_base::failbit);
