@@ -6,6 +6,7 @@
 
 #include "NaiveDynamicBitVector.h"
 #include "DynamicBitVector.h"
+#include "SmallStaticBitVector.h"
 
 TEST(NaiveBVTest, test1) {
     using ads::NaiveDynamicBitVector;
@@ -167,7 +168,7 @@ TEST(BVTest, Leaf) {
 }
 
 TEST(BVTest, BitMasks) {
-    using BV = ads::StaticBitVector<uint64_t, 4>;
+    using BV = ads::SmallStaticBitVector<uint64_t, 4>;
 
     ASSERT_EQ(BV::bit_mask(0), 0b1);
     ASSERT_EQ(BV::bit_mask(63), 0b1000000000000000000000000000000000000000000000000000000000000000);

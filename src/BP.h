@@ -13,7 +13,8 @@
 #include "TaggedPointer.h"
 #include "utils.h"
 #include "BitRange.h"
-#include "StaticBitVector.h"
+#include "SmallDynamicBitVector.h"
+//#include "SmallStaticBitVector.h"
 
 namespace ads {
     template<class BlockType = uint64_t, size_t NumBlocks = 64>
@@ -29,6 +30,8 @@ namespace ads {
     public:
         struct Inner;
         struct Leaf;
+
+        // ## Inner and Leaf Node ##
 
         class NodeHandle {
             explicit NodeHandle(TaggedPointer<Inner, Leaf> ptr) : m_ptr(ptr) {}
@@ -72,7 +75,7 @@ namespace ads {
             constexpr static size_type max_num_blocks = NumBlocks;
 
             static_assert(max_num_blocks > 1);
-            using Bits = StaticBitVector<block_type, max_num_blocks>;
+            using Bits = SmallDynamicBitVector<block_type, max_num_blocks>;
             constexpr static size_type block_width = std::numeric_limits<block_type>::digits; // Number of bits per block.
 
             // Split leave if it has more that `max_num_bits` and merge two leaves if both have `min_num_bits`.
@@ -85,9 +88,9 @@ namespace ads {
 
             [[nodiscard]] size_type size() const { return m_bits.size(); }
 
-            [[nodiscard]] constexpr size_type capacity() const { return m_bits.capacity(); }
-
-            [[nodiscard]] constexpr size_type num_blocks() const { return m_bits.size() / block_width; }
+            [[nodiscard]] size_type required_bits_upperbound() const {
+                return m_bits.required_bits_upperbound() + (sizeof total_excess) * 8 + (sizeof min_excess) * 8;
+            }
 
             [[nodiscard]] bool access(size_type i) const { return m_bits.access(i); }
 
@@ -208,10 +211,16 @@ namespace ads {
                 // NOTE: different definition than slides
                 //       forward_search(i, d) = min {j > i : excess(j+1) - excess(i) = d }
                 assert(i == left_end || (0 <= i && i < size()));
+                if (i == left_end && d == 0) return {left_end, 0};
+
 #ifndef NDEBUG
                 auto d_original = d;
+
+                auto excess = [&](auto idx) {
+                    idx = std::clamp(idx, 0, size());
+                    return idx - 2 * rank1(idx);
+                };
 #endif
-                if (i == left_end && d == 0) return {i, 0};
 
                 size_type j = 0;
                 if (i != left_end) {
@@ -219,13 +228,6 @@ namespace ads {
                     d -= (access(i) ? -1 : 1);
                 }
                 assert(i < size() && j <= size());
-
-#ifndef NDEBUG
-                auto excess = [&](auto idx) {
-                    idx = std::clamp(idx, 0, size());
-                    return idx - 2 * rank1(idx);
-                };
-#endif
 
                 if (j == size()) {
                     assert(excess(j + 1) - excess(i) == d_original - d);
@@ -235,6 +237,7 @@ namespace ads {
                 assert(block_idx < max_num_blocks);
 
                 // first block
+                // Scan bit by bit until end of word or end of bit vector
                 for (bool b: BlockBitRange(m_bits.blocks(block_idx), j % block_width,
                                            std::min(size() - block_idx * block_width, block_width))) {
                     assert(j < size());
@@ -254,15 +257,21 @@ namespace ads {
                 assert(j < size());
                 assert(j % block_width == 0);
                 assert(j / block_width == block_idx);
+
                 const size_type last_block_idx = (size() - 1) / block_width;
+
+                // Skip blocks, if it's impossible for the result to be there and revert to bit-wise scan if it is
+                // possible.
                 for (; block_idx < last_block_idx; ++block_idx) {
                     assert(j % block_width == 0);
                     assert(j / block_width == block_idx);
 
                     size_type block_ones = std::popcount(m_bits.blocks(block_idx));
+                    size_type block_zeros = block_width - block_ones;
 
-                    if (-block_ones <= d || d <= block_width - block_ones) {
-                        // small steps
+                    if (-block_ones <= d && d <= block_zeros) {
+                        // If it is possible, that a relative excess of d can be found in the current block.
+                        // Extreme cases 0^z1^o and 1^o0^z, where o is the number of ones and z is the number of zeros.
                         for (bool b: BlockBitRange(m_bits.blocks(block_idx))) {
                             d -= b ? -1 : 1;
                             if (d == 0) {
@@ -272,14 +281,15 @@ namespace ads {
                             ++j;
                         }
                     } else {
-                        // big step
+                        // Otherwise, a relative excess of d cannot be found in the current block, and we can skip it.
                         j += block_width;
-                        d -= block_width - 2 * block_ones;
+                        d -= block_zeros - block_ones;
                     }
                 }
                 assert(block_idx == last_block_idx);
 
                 // last block
+                // Scan bit by bit until end of bit vector.
                 auto last_block_num_bits = size() - last_block_idx * block_width;
                 assert(last_block_num_bits == block_width || last_block_num_bits == (size() % block_width));
                 for (bool b: BlockBitRange(m_bits.blocks(block_idx), 0, last_block_num_bits)) {
@@ -297,7 +307,7 @@ namespace ads {
 
             [[nodiscard]] std::pair<size_type, size_type> backward_search(size_type i, size_type d) const {
                 // NOTE: different definition than slides
-                //       forward_search(i, d) = min {j < i : excess(i+1) - excess(j) = d }
+                //       backward_search(i, d) = min {j < i : excess(i+1) - excess(j) = d }
                 assert((0 <= i && i < size()) || i == right_end);
                 if (i == right_end && d == 0) return {i, 0};
 
@@ -351,6 +361,10 @@ namespace ads {
                 size_type excess = 0;
                 size_type current_min_excess = 0;
 
+                if (size() == 0) {
+                    return {excess, current_min_excess};
+                }
+
                 auto update_for_block = [&](block_type block, size_type num_bits = block_width) {
                     for (size_type k = 0; k < num_bits; ++k, block >>= 1) {
                         if (block & Leaf::Bits::bit_mask(0)) {
@@ -394,6 +408,17 @@ namespace ads {
                 return {excess, current_min_excess};
             }
         };
+
+    private:
+        // ## Query operations on nodes ##
+        // bool access(node, i)
+        // bool access(inner, i)
+        // void rank1(node, i, rank&)
+        // void rank1(inner, i, rank&)
+        // void select1(node, i, result&)
+        // void select1(inner, i, result&)
+        // void select0(node, i, result&)
+        // void select0(inner, i, result&)
 
         static bool access(const NodeHandle &node, size_type i) {
             // Dispatch dependent on node type.
@@ -534,6 +559,14 @@ namespace ads {
             }
         }
 
+        // ## Tree modifying operations ##
+        // Inner* split(leaf, high_bit)
+        // {node, changed} insert(node, i, b)
+        // {node, deleted_bit} remove(node, i)
+        // {node, deleted_bit} remove_second_level(inner, i)
+        // {node, deleted_bit} remove_first_level(inner, i)
+        // Leaf* merge(inner)
+
         /**
          * Split up one full leaf into two leaves of equal size and append `high_bit` to the right one.
          * @param leaf
@@ -541,7 +574,7 @@ namespace ads {
          * @return the new inner node that is parent to the two leaves
          */
         static Inner *split(Leaf *leaf, bool high_bit) {
-            assert(leaf->size() == leaf->capacity());
+            assert(leaf->size() == Leaf::max_num_bits);
             static_assert(Leaf::max_num_blocks > 1);
 
             Leaf *left = leaf;
@@ -558,7 +591,6 @@ namespace ads {
             auto left_ones = left->rank1(left_size);
             std::tie(left->total_excess, left->min_excess) = left->calculate_excess_info();
 
-            auto right_size = right->size();
             std::tie(right->total_excess, right->min_excess) = right->calculate_excess_info();
 
             auto total_excess = left->total_excess + right->total_excess;
@@ -735,6 +767,7 @@ namespace ads {
 
                         // Append moved bit to b. This will not overflow, as b has min_num_bits - 1 bits.
                         [[maybe_unused]] auto [overflow_, high_bit_] = b_leaf->insert(b_leaf->size(), moved_bit);
+                        //                         [[maybe_unused]] auto overflow_ = b_leaf->push_back(moved_bit); !!!!!
                         assert(!overflow_);
 
                         a->left_ones -= deleted_bit;
@@ -987,6 +1020,12 @@ namespace ads {
             return b;
         }
 
+        // ### Node info dispatch ###
+        // int height(node)
+        // size_type total_excess(node)
+        // size_type min_excess(node)
+        // void update_excess_info_from_children_info(inner)
+
         static int height(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
@@ -1037,6 +1076,15 @@ namespace ads {
         }
 
 #endif
+
+        // ## AVL Tree balance operations ##
+        // int balance_factor(node)
+        // int balance_factor(inner)
+        // Inner* balance(inner)
+        // Inner* rotate_left_left(inner)
+        // Inner* rotate_left_right(inner)
+        // Inner* rotate_right_left(inner)
+        // Inner* rotate_right_right(inner)
 
         static int balance_factor(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
@@ -1179,6 +1227,11 @@ namespace ads {
             return b;
         }
 
+        // ## Node deletion ##
+        // void delete_node(NodeHandle)
+        // void delete_node(Inner*)
+        // void delete_node(Leaf*)
+
         static void delete_node(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             return inner ? delete_node(inner) : delete_node(leaf);
@@ -1192,6 +1245,7 @@ namespace ads {
 
         static void delete_node(Leaf *leaf) { delete leaf; }
 
+        // ## Debug checks ##
 #ifndef NDEBUG
 
         static std::tuple<bool, size_type, size_type, size_type, size_type, size_type>
@@ -1236,16 +1290,22 @@ namespace ads {
 
 #endif
 
-        static size_type required_bits(NodeHandle node) {
+        // ## Required bits upperbound ##
+
+        static size_type required_bits_upperbound(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
-                return required_bits(inner->left) + required_bits(inner->right) + sizeof(Inner) * 8;
+                return required_bits_upperbound(inner->left) + required_bits_upperbound(inner->right) +
+                       sizeof(Inner) * 8;
             } else {
-                return sizeof(Leaf) * 8;
+                return leaf->required_bits_upperbound();
             }
         }
 
-        [[nodiscard]] bool access(size_type i) const { return access(m_root, i); }
+        // ## BV operations ##
+        // ### BV modifying operations ##
+        // void insert(i, b)
+        // void remove(i)
 
         void insert(size_type i, bool b) {
             assert(i <= size());
@@ -1273,6 +1333,15 @@ namespace ads {
 #endif
         }
 
+    public:
+        // ### BV query operations ##
+        // bool access(i)
+        // size_type rank(i, b)
+        // size_type select(i, b)
+        // size_type size()
+
+        [[nodiscard]] bool access(size_type i) const { return access(m_root, i); }
+
         [[nodiscard]] size_type rank(size_type i, bool b) const {
             assert(i <= size());
             size_type rank = 0;
@@ -1294,6 +1363,12 @@ namespace ads {
         [[nodiscard]] size_type size() const {
             return m_bv_size;
         }
+
+        // ### BP query operations ###
+        // size_type find_close(i)
+        // size_type find_open(i)
+        // size_type excess(i)
+        // size_type enclose(i)
 
         [[nodiscard]] size_type find_close(size_type i) const {
             assert(access(i) == open);
@@ -1320,6 +1395,8 @@ namespace ads {
             return idx;
         }
 
+    private:
+        // ### BV map operation ###
 
         template<class F>
         void preorder_map(F f) const {
@@ -1341,6 +1418,7 @@ namespace ads {
 
 
     public:
+        // ## Constructor/Destructor ##
         BP() : m_root(NodeHandle::leaf(new Leaf)), m_bv_size(0) {
             insert(size(), open);
             insert(size(), close);
@@ -1353,6 +1431,13 @@ namespace ads {
         }
 
         ~BP() { delete_node(m_root); }
+
+        // ### Supported tree operations ###
+        // void insertchild(v, i, k)
+        // void deletenode(v)
+        // size_type ith_child(v, i)
+        // size_type parent(v)
+        // size_type subtree_size(v)
 
         void insertchild(size_type v, size_type i, size_type k) {
             auto v_open_idx = select(v + 1, open);
@@ -1407,6 +1492,12 @@ namespace ads {
             return (find_close(v_idx) - v_idx + 1) / 2;
         }
 
+        // ## Misc ##
+        // std::ostream << overload
+        // size_type required_bits_upperbound()
+        // size_type num_nodes()
+        // std::vector<size_type> preorder_out_degree_sequence()
+
 
         friend std::ostream &operator<<(std::ostream &os, const BP &bv) {
             print(os, bv.m_root, 0);
@@ -1414,17 +1505,25 @@ namespace ads {
         }
 
         [[nodiscard]] size_type required_bits_upperbound() const {
-            return required_bits(m_root) + (sizeof m_root) * 8;
+            return required_bits_upperbound(m_root) + (sizeof m_root) * 8;
         }
 
         [[nodiscard]] size_type num_nodes() const {
             return m_bv_size / 2;
         }
 
+        /**
+         * Returns the out degree sequence in preorder traversal order of the nodes in the tree.
+         * @return
+         */
         [[nodiscard]] std::vector<size_type> preorder_out_degree_sequence() const {
             std::vector<size_type> degrees(num_nodes());
             std::vector<size_type> path;
 
+            // Iterate over all bits.
+            // If we encounter a '(', descend one level deeper into the tree. If we encounter ')', ascend one level.
+            // Keep track of the current node index.
+            // When encountering a new node, increment the out degree of its parent.
             size_type v = 0;
             preorder_map([&](bool b) {
                 if (v == 0) {

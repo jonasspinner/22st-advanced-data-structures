@@ -28,7 +28,7 @@ namespace ads {
 
         auto t0 = std::chrono::steady_clock::now();
 
-        ads::DynamicBitVector<uint64_t, 128> bv(bits);
+        ads::DynamicBitVector<uint64_t, 1024> bv(bits);
         std::vector<int> output_data;
 
         for (auto operation: operations) {

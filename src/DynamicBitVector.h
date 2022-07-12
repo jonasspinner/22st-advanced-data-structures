@@ -12,7 +12,8 @@
 
 #include "TaggedPointer.h"
 #include "utils.h"
-#include "StaticBitVector.h"
+#include "SmallStaticBitVector.h"
+#include "SmallDynamicBitVector.h"
 
 namespace ads {
     template<class BlockType = uint64_t, size_t NumBlocks = 64>
@@ -24,6 +25,8 @@ namespace ads {
     public:
         struct Inner;
         struct Leaf;
+
+        // ## Inner and Leaf Node ##
 
         class NodeHandle {
             explicit NodeHandle(TaggedPointer<Inner, Leaf> ptr) : m_ptr(ptr) {}
@@ -62,21 +65,23 @@ namespace ads {
 
         struct Leaf {
             using block_type = BlockType;
-            constexpr static size_type num_blocks = NumBlocks;
+            constexpr static size_type max_num_blocks = NumBlocks;
 
-            static_assert(num_blocks > 1);
-            using Bits = StaticBitVector<block_type, num_blocks>;
+            static_assert(max_num_blocks > 1);
+            using Bits = SmallDynamicBitVector<block_type, max_num_blocks>;
             constexpr static size_type block_width = std::numeric_limits<block_type>::digits; // Number of bits per block.
 
             // Split leave if it has more that `max_num_bits` and merge two leaves if both have `min_num_bits`.
-            constexpr static size_type max_num_bits = block_width * num_blocks;
+            constexpr static size_type max_num_bits = block_width * max_num_blocks;
             constexpr static size_type min_num_bits = max_num_bits / 4;
 
             Bits m_bits{};
 
             [[nodiscard]] size_type size() const { return m_bits.size(); }
 
-            [[nodiscard]] constexpr size_type capacity() const { return m_bits.capacity(); }
+            [[nodiscard]] size_type required_bits_upperbound() const {
+                return m_bits.required_bits_upperbound();
+            }
 
             [[nodiscard]] bool access(size_type i) const { return m_bits.access(i); }
 
@@ -98,7 +103,13 @@ namespace ads {
 
             [[nodiscard]] std::pair<bool, bool> push_front(bool b) { return m_bits.push_front(b); }
 
-            bool push_back(bool b) { return m_bits.push_back(b); }
+            [[nodiscard]] bool push_back(bool b) { return m_bits.push_back(b); }
+
+            void split_into_empty(Leaf &other) {
+                m_bits.split_into_empty(other.m_bits);
+                assert(std::get<0>(check_integrity(*this)));
+                assert(std::get<0>(check_integrity(other)));
+            }
 
             friend std::ostream &operator<<(std::ostream &os, const Leaf &leaf) {
                 os << "Leaf(size=" << leaf.size() << ", bits=";
@@ -108,6 +119,19 @@ namespace ads {
                 return os << ")";
             }
         };
+
+    private:
+        // ## Query operations on nodes ##
+        // bool access(node, i)
+        // bool access(inner, i)
+        // void flip(node, i)
+        // void flip(inner, i)
+        // void rank1(node, i, rank&)
+        // void rank1(inner, i, rank&)
+        // void select1(node, i, result&)
+        // void select1(inner, i, result&)
+        // void select0(node, i, result&)
+        // void select0(inner, i, result&)
 
         static bool access(const NodeHandle &node, size_type i) {
             // Dispatch dependent on node type.
@@ -187,6 +211,14 @@ namespace ads {
             return select0(inner.right, i - num_zeros_on_left, result);
         }
 
+        // ## Tree modifying operations ##
+        // Inner* split(leaf, high_bit)
+        // {node, changed} insert(node, i, b)
+        // {node, deleted_bit} remove(node, i)
+        // {node, deleted_bit} remove_second_level(inner, i)
+        // {node, deleted_bit} remove_first_level(inner, i)
+        // Leaf* merge(inner)
+
         /**
          * Split up one full leaf into two leaves of equal size and append `high_bit` to the right one.
          * @param leaf
@@ -194,21 +226,24 @@ namespace ads {
          * @return the new inner node that is parent to the two leaves
          */
         static Inner *split(Leaf *leaf, bool high_bit) {
-            assert(leaf->size() == leaf->capacity());
-            static_assert(Leaf::num_blocks > 1);
+            assert(leaf->size() == Leaf::max_num_bits);
+            static_assert(Leaf::max_num_blocks > 1);
 
             Leaf *left = leaf;
             Leaf *right = new Leaf;
 
-            left->m_bits.split_into_empty(right->m_bits);
+            left->split_into_empty(*right);
             [[maybe_unused]] auto overflow_ = right->push_back(high_bit);
 
             assert(!overflow_);
             assert(left->size() == Leaf::max_num_bits / 2);
             assert(right->size() == Leaf::max_num_bits / 2 + 1);
+            assert(left->size() >= Leaf::min_num_bits);
+            assert(right->size() >= Leaf::min_num_bits);
 
             auto left_size = left->size();
             auto left_ones = left->m_bits.num_ones();
+            assert(left_ones == left->rank1(left->size()));
 
             auto *new_inner = new Inner{
                     NodeHandle::leaf(left), NodeHandle::leaf(right),
@@ -280,81 +315,6 @@ namespace ads {
             }
         }
 
-        void insert_iter_(size_type i, bool b) {
-            //std::cout << "insert(" << i << ", " << b << ")\n";
-            constexpr static bool left = true;
-            constexpr static bool right = false;
-
-            auto node = m_root;
-            auto &path = m_path;
-            path.clear();
-
-            auto [inner, leaf] = node.cast();
-            while (inner) {
-                if (i < inner->left_size) {
-                    inner->left_size++;
-                    inner->left_ones += b;
-
-                    path.emplace_back(inner, left);
-                    std::tie(inner, leaf) = inner->left.cast();
-                } else {
-                    i -= inner->left_size;
-                    path.emplace_back(inner, right);
-                    std::tie(inner, leaf) = inner->right.cast();
-                }
-            }
-
-            auto [overflow, high_bit] = leaf->insert(i, b);
-            if (overflow) {
-                //std::cout << "overflow\n";
-                node = NodeHandle::inner(split(leaf, high_bit));
-                if (path.empty()) {
-                    m_root = node;
-                    return;
-                }
-                bool was_left_child{};
-
-                size_type h = 1;
-                while (!path.empty()) {
-                    ++h;
-
-                    std::tie(inner, was_left_child) = path.back();
-                    path.pop_back();
-
-                    //std::cout << "   " << inner << " " << (was_left_child ? "left" : "right") << " " << inner->height
-                    //          << " " << height << "\n";
-
-                    if (inner->height + 1 == h) {
-                        inner->height = h;
-                        if (was_left_child) {
-                            inner->left = node;
-                            inner = balance(inner);
-                            assert(std::get<0>(check_integrity(*inner)));
-                            //assert(inner_prime == inner);
-                            assert(std::abs(balance_factor(*inner)) < 2);
-                            node = NodeHandle::inner(inner);
-                        } else {
-                            inner->right = node;
-                            inner = balance(inner);
-                            //assert(inner_prime == inner);
-                            assert(std::abs(balance_factor(*inner)) < 2);
-                            assert(std::get<0>(check_integrity(*inner)));
-                            node = NodeHandle::inner(inner);
-                        }
-                    } else {
-                        if (was_left_child) { inner->left = node; } else { inner->right = node; }
-                        assert(inner->height == std::max(height(inner->left), height(inner->right)) + 1);
-                        assert(node.height() < inner->height);
-                        assert(std::get<0>(check_integrity(*inner)));
-                        assert(std::abs(balance_factor(*inner)) < 2);
-                        return;
-                    }
-                }
-                m_root = node;
-                assert(std::get<0>(check_integrity(m_root)));
-            }
-        }
-
 
         /**
          *
@@ -387,6 +347,9 @@ namespace ads {
 
             // The height might have decreased by one.
             inner->height = std::max(height(inner->left), height(inner->right)) + 1;
+            if (inner->height <= 4) {
+                assert(std::get<0>(check_integrity(*inner)));
+            }
             return {NodeHandle::inner(balance(inner)), deleted_bit};
         }
 
@@ -454,6 +417,7 @@ namespace ads {
                         a->height = std::max(height(a->left), height(a->right)) + 1;
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b_leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 1.2.2     and the leaf has more than the minimum number of bits.
@@ -465,6 +429,7 @@ namespace ads {
                         a->left_ones -= deleted_bit;
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b_leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
@@ -512,6 +477,7 @@ namespace ads {
                         a->height = std::max(height(a->left), height(a->right)) + 1;
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b_leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(balance(a)), deleted_bit};
                     } else {
                         // 2.2.2     and the leaf has more than the minimum number of bits.
@@ -521,6 +487,7 @@ namespace ads {
                         auto deleted_bit = b_leaf->remove(i);
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b_leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 }
@@ -536,6 +503,9 @@ namespace ads {
             auto b = a->left.cast().second;
             auto c = a->right.cast().second;
             assert(b && c);
+
+            assert(b->size() >= Leaf::min_num_bits);
+            assert(c->size() >= Leaf::min_num_bits);
 
             // Following cases are distinguished:
             // 1.    i is in the left child
@@ -562,6 +532,7 @@ namespace ads {
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
                         assert(std::get<0>(check_integrity(*leaf)));
+                        assert(leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 1.1.2     and the right child has more than the minimum number of bits left.
@@ -569,9 +540,8 @@ namespace ads {
                         //           and append the first bit of the right child to the left child.
 
                         assert(c->size() > Leaf::min_num_bits);
-                        if constexpr(Leaf::max_num_bits >= Leaf::min_num_bits + 2 * Leaf::block_width) {
+                        if constexpr(false && Leaf::max_num_bits >= Leaf::min_num_bits + 2 * Leaf::block_width) {
                             if (c->size() >= Leaf::min_num_bits + 2 * Leaf::block_width) {
-                                //std::cout << "could move block: " << b->size() << " " << c->size() << std::endl;
                                 size_type num_moved_blocks{};
                                 while (c->size() >= b->size() + Leaf::block_width) {
                                     auto block = c->m_bits.pop_front_block();
@@ -584,10 +554,8 @@ namespace ads {
                                 a->left_size--;
                                 a->left_ones -= deleted_bit;
 
-                                //std::cout << "moved " << num_moved_blocks << " blocks" << std::endl;
-                                //std::cout << "      " << b->size() << " " << c->size() << std::endl;
-
                                 assert(std::get<0>(check_integrity(*a)));
+                                assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                                 return {NodeHandle::inner(a), deleted_bit};
                             }
                         }
@@ -601,6 +569,7 @@ namespace ads {
                         a->left_ones += moved_bit;
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
@@ -615,6 +584,7 @@ namespace ads {
                     a->left_ones -= deleted_bit;
 
                     assert(std::get<0>(check_integrity(*a)));
+                    assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             } else {
@@ -631,6 +601,7 @@ namespace ads {
                         auto deleted_bit = leaf->remove(i);
 
                         assert(std::get<0>(check_integrity(*leaf)));
+                        assert(leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 2.1.2     and the left child has more than the minimum number of bits left.
@@ -638,8 +609,9 @@ namespace ads {
                         //           and prepend the last bit of the left child to the right child.
 
                         assert(b->size() > Leaf::min_num_bits);
-                        if constexpr (Leaf::max_num_bits >= Leaf::min_num_bits + 2 * Leaf::block_width) {
-                            if (b->size() >= Leaf::min_num_bits + 2 * Leaf::block_width && b->size() % Leaf::block_width == 0) {
+                        if constexpr (false && Leaf::max_num_bits >= Leaf::min_num_bits + 2 * Leaf::block_width) {
+                            if (b->size() >= Leaf::min_num_bits + 2 * Leaf::block_width &&
+                                b->size() % Leaf::block_width == 0) {
                                 //std::cout << "could move block: " << b->size() << " " << c->size() << std::endl;
                                 i -= a->left_size;
                                 size_type num_moved_bits{};
@@ -669,6 +641,7 @@ namespace ads {
                                 //std::cout << "      " << b->size() << " " << c->size() << std::endl;
 
                                 assert(std::get<0>(check_integrity(*a)));
+                                assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                                 return {NodeHandle::inner(a), deleted_bit};
 
                             }
@@ -683,6 +656,7 @@ namespace ads {
                         a->left_ones -= moved_bit;
 
                         assert(std::get<0>(check_integrity(*a)));
+                        assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
@@ -694,6 +668,7 @@ namespace ads {
                     auto deleted_bit = c->remove(i - a->left_size);
 
                     assert(std::get<0>(check_integrity(*a)));
+                    assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             }
@@ -732,6 +707,9 @@ namespace ads {
             return b;
         }
 
+        // ### Node info dispatch ###
+        // int height(node)
+
         static int height(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
@@ -753,6 +731,15 @@ namespace ads {
         }
 
 #endif
+
+        // ## AVL Tree balance operations ##
+        // int balance_factor(node)
+        // int balance_factor(inner)
+        // Inner* balance(inner)
+        // Inner* rotate_left_left(inner)
+        // Inner* rotate_left_right(inner)
+        // Inner* rotate_right_left(inner)
+        // Inner* rotate_right_right(inner)
 
         static int balance_factor(const NodeHandle &node) {
             auto [inner, leaf] = node.cast();
@@ -887,6 +874,7 @@ namespace ads {
 
         static void delete_node(Leaf *leaf) { delete leaf; }
 
+        // ## Debug checks ##
 #ifndef NDEBUG
 
         static std::tuple<bool, size_type, size_type, size_type>
@@ -922,16 +910,21 @@ namespace ads {
 
 #endif
 
-        static size_type required_bits(NodeHandle node) {
+        // ## Required bits upperbound ##
+
+        static size_type required_bits_upperbound(NodeHandle node) {
             auto [inner, leaf] = node.cast();
             if (inner) {
-                return required_bits(inner->left) + required_bits(inner->right) + sizeof(Inner) * 8;
+                return required_bits_upperbound(inner->left) + required_bits_upperbound(inner->right) +
+                       sizeof(Inner) * 8;
             } else {
-                return sizeof(Leaf) * 8;
+                return leaf->required_bits_upperbound();
             }
         }
 
     public:
+        // ## Constructor/Destructor ##
+
         DynamicBitVector() : m_root(NodeHandle::leaf(new Leaf)), m_size(0) {}
 
         explicit DynamicBitVector(const std::vector<bool> &bits) : m_root(NodeHandle::leaf(new Leaf)), m_size(0) {
@@ -942,13 +935,16 @@ namespace ads {
 
         ~DynamicBitVector() { delete_node(m_root); }
 
-        [[nodiscard]] bool access(size_type i) const { return access(m_root, i); }
+        // ## BV operations ##
+        // ### BV modifying operations ##
+        // void insert(i, b)
+        // void remove(i)
+        // void flip(i)
 
         void insert(size_type i, bool b) {
             assert(i <= size());
             bool changed{};
             std::tie(m_root, changed) = insert(m_root, i, b);
-            //insert_iter_(i, b);
             m_size++;
 
 #ifndef NDEBUG
@@ -974,6 +970,14 @@ namespace ads {
             flip(m_root, i);
         }
 
+        // ### BV query operations ##
+        // bool access(i)
+        // size_type rank(i, b)
+        // size_type select(i, b)
+        // size_type size()
+
+        [[nodiscard]] bool access(size_type i) const { return access(m_root, i); }
+
         [[nodiscard]] size_type rank(size_type i, bool b) const {
             assert(i <= size());
             size_type rank = 0;
@@ -996,6 +1000,11 @@ namespace ads {
             return m_size;
         }
 
+        // ## Misc ##
+        // clear()
+        // std::ostream << overload
+        // size_type required_bits_upperbound()
+
         void clear() {
             delete_node(m_root);
             m_root = new Leaf;
@@ -1008,7 +1017,7 @@ namespace ads {
         }
 
         [[nodiscard]] size_type required_bits_upperbound() const {
-            return required_bits(m_root) + (sizeof m_root) * 8;
+            return required_bits_upperbound(m_root) + (sizeof m_root) * 8;
         }
 
     private:
