@@ -9,6 +9,24 @@
 `SmallDynamicBitVector<>` und `SmallStaticBitVector<>`
 
 
+## Building and Running
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make ads_program_a
+```
+
+```bash
+build/ads_program_a bv [input] [output]
+```
+
+```bash
+build/ads_program_a bp [input] [output]
+```
+
+
+
 ## Aufgabe 1: Dynamischer Bitvektor `ads::DynamicBitVector<>`
 
     ## Inner and Leaf Node ##
