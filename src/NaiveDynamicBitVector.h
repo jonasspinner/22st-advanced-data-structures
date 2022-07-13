@@ -9,7 +9,7 @@
 namespace ads {
     class NaiveDynamicBitVector {
     public:
-        using size_type = std::size_t;
+        using size_type = int;
 
         NaiveDynamicBitVector() = default;
 
@@ -54,7 +54,7 @@ namespace ads {
             throw std::invalid_argument("there is no ith bit of the given type");
         }
 
-        [[nodiscard]] size_type size() const { return m_bits.size(); }
+        [[nodiscard]] size_type size() const { return static_cast<size_type>(m_bits.size()); }
 
         [[nodiscard]] bool empty() const { return m_bits.empty(); }
 

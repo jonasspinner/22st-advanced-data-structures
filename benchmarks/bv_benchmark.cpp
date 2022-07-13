@@ -33,7 +33,7 @@ BENCHMARK(BM_InsertN<ads::DynamicBitVector<uint64_t, 64>>)->Arg(1 << 5)->Arg(102
 
 template<class BV>
 static void BM_Insert(benchmark::State &state) {
-    int n = state.range(0);
+    int n = static_cast<int>(state.range(0));
     std::minstd_rand gen;
     std::bernoulli_distribution bit_dist;
 
@@ -68,17 +68,17 @@ BENCHMARK(BM_Insert<ads::DynamicBitVector<uint64_t, 1024>>)->RangeMultiplier(2)-
 
 template<class BV>
 static void BM_Remove(benchmark::State &state) {
-    size_t n = state.range(0);
+    int n = static_cast<int>(state.range(0));
     std::minstd_rand gen;
     std::bernoulli_distribution bit_dist;
 
     BV bv;
-    for (size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i) {
         std::uniform_int_distribution<size_t> index_dist(0, bv.size());
         bv.insert(index_dist(gen), bit_dist(gen));
     }
     for (auto _: state) {
-        std::uniform_int_distribution<size_t> index_dist(0, bv.size());
+        std::uniform_int_distribution<size_t> index_dist(0, bv.size() - 1);
         if (bv.size() == n) {
             state.PauseTiming();
             for (int i = 0; i < 128; ++i) {
@@ -103,12 +103,12 @@ BENCHMARK(BM_Remove<ads::DynamicBitVector<uint64_t, 1024>>)->RangeMultiplier(2)-
 
 template<class BV>
 static void BM_RemoveMid(benchmark::State &state) {
-    size_t n = state.range(0);
+    int n = static_cast<int>(state.range(0));
     std::minstd_rand gen;
     std::bernoulli_distribution bit_dist;
 
     BV bv;
-    for (size_t i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i) {
         std::uniform_int_distribution<size_t> index_dist(0, bv.size());
         bv.insert(index_dist(gen), bit_dist(gen));
     }
