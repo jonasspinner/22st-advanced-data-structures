@@ -14,7 +14,7 @@
 #include "utils.h"
 #include "BitRange.h"
 #include "SmallDynamicBitVector.h"
-//#include "SmallStaticBitVector.h"
+#include "SmallStaticBitVector.h"
 
 namespace ads {
     template<class BlockType = uint64_t, size_t NumBlocks = 64>
@@ -883,10 +883,10 @@ namespace ads {
             if (i < a->left_size) {
                 // 1.    i is in the left child
 
-                if (b->size() == Leaf::min_num_bits) {
+                if (b->size() <= Leaf::min_num_bits) {
                     // 1.1     and the left child only has the minimum number of bits left
 
-                    if (c->size() == Leaf::min_num_bits) {
+                    if (c->size() <= Leaf::min_num_bits) {
                         // 1.1.1     and the right child only has the minimum number of bits left.
                         // Strategy: Merge both children and remove the bit in the resulting leaf.
 
@@ -1001,16 +1001,23 @@ namespace ads {
             assert(b->size() == Leaf::min_num_bits);
             assert(c->size() == Leaf::min_num_bits);
 
-            if constexpr (Leaf::min_num_bits % Leaf::block_width == 0) {
-                // If the minimum number of bits aligns with block boundaries, we can copy whole blocks.
-                b->m_bits.concat_block_aligned(c->m_bits);
+            if (b->size() == Leaf::min_num_bits && c->size() == Leaf::min_num_bits) {
+                if constexpr (Leaf::min_num_bits % Leaf::block_width == 0) {
+                    // If the minimum number of bits aligns with block boundaries, we can copy whole blocks.
+                    b->m_bits.concat_block_aligned(c->m_bits);
+                } else {
+                    for (size_type j = 0; j < Leaf::min_num_bits; ++j) {
+                        [[maybe_unused]] auto overflow_ = b->push_back(c->access(j));
+                        assert(!overflow_);
+                    }
+                }
+                assert(b->size() == 2 * Leaf::min_num_bits);
             } else {
-                for (size_type j = 0; j < Leaf::min_num_bits; ++j) {
-                    [[maybe_unused]] auto overflow_ = b->push_back(c->access(j));
+                for (int i = 0; i < c->size(); ++i) {
+                    [[maybe_unused]] auto overflow_ = b->push_back(c->access(i));
                     assert(!overflow_);
                 }
             }
-            assert(b->size() == 2 * Leaf::min_num_bits);
             delete a;
             delete c;
 

@@ -504,9 +504,6 @@ namespace ads {
             auto c = a->right.cast().second;
             assert(b && c);
 
-            assert(b->size() >= Leaf::min_num_bits);
-            assert(c->size() >= Leaf::min_num_bits);
-
             // Following cases are distinguished:
             // 1.    i is in the left child
             // 1.1     and the left child only has the minimum number of bits left
@@ -522,24 +519,22 @@ namespace ads {
             if (i < a->left_size) {
                 // 1.    i is in the left child
 
-                if (b->size() == Leaf::min_num_bits) {
+                if (b->size() <= Leaf::min_num_bits) {
                     // 1.1     and the left child only has the minimum number of bits left
 
-                    if (c->size() == Leaf::min_num_bits) {
+                    if (c->size() <= Leaf::min_num_bits) {
                         // 1.1.1     and the right child only has the minimum number of bits left.
                         // Strategy: Merge both children and remove the bit in the resulting leaf.
 
                         auto *leaf = merge(a);
                         auto deleted_bit = leaf->remove(i);
                         assert(std::get<0>(check_integrity(*leaf)));
-                        assert(leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 1.1.2     and the right child has more than the minimum number of bits left.
                         // Strategy: Delete bit from the left child
                         //           and append the first bit of the right child to the left child.
 
-                        assert(c->size() > Leaf::min_num_bits);
                         if constexpr(false && Leaf::max_num_bits >= Leaf::min_num_bits + 2 * Leaf::block_width) {
                             if (c->size() >= Leaf::min_num_bits + 2 * Leaf::block_width) {
                                 size_type num_moved_blocks{};
@@ -555,7 +550,6 @@ namespace ads {
                                 a->left_ones -= deleted_bit;
 
                                 assert(std::get<0>(check_integrity(*a)));
-                                assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                                 return {NodeHandle::inner(a), deleted_bit};
                             }
                         }
@@ -569,7 +563,7 @@ namespace ads {
                         a->left_ones += moved_bit;
 
                         assert(std::get<0>(check_integrity(*a)));
-                        assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
+                        // assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
@@ -584,16 +578,15 @@ namespace ads {
                     a->left_ones -= deleted_bit;
 
                     assert(std::get<0>(check_integrity(*a)));
-                    assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             } else {
                 // 2.    i is in the right child
 
-                if (c->size() == Leaf::min_num_bits) {
+                if (c->size() <= Leaf::min_num_bits) {
                     // 2.1     and the right child only has the minimum number of bits left
 
-                    if (b->size() == Leaf::min_num_bits) {
+                    if (b->size() <= Leaf::min_num_bits) {
                         // 2.1.1     and the left child only has the minimum number of bits left.
                         // Strategy: Merge both children and remove the bit in the resulting leaf.
 
@@ -601,7 +594,6 @@ namespace ads {
                         auto deleted_bit = leaf->remove(i);
 
                         assert(std::get<0>(check_integrity(*leaf)));
-                        assert(leaf->size() >= Leaf::min_num_bits);
                         return {NodeHandle::leaf(leaf), deleted_bit};
                     } else {
                         // 2.1.2     and the left child has more than the minimum number of bits left.
@@ -656,19 +648,15 @@ namespace ads {
                         a->left_ones -= moved_bit;
 
                         assert(std::get<0>(check_integrity(*a)));
-                        assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                         return {NodeHandle::inner(a), deleted_bit};
                     }
                 } else {
                     // 2.2     and the right child has more than the minimum number of bits left.
                     // Strategy: Directly delete bit from right child.
 
-                    assert(c->size() > Leaf::min_num_bits);
-
                     auto deleted_bit = c->remove(i - a->left_size);
 
                     assert(std::get<0>(check_integrity(*a)));
-                    assert(b->size() >= Leaf::min_num_bits && c->size() >= Leaf::min_num_bits);
                     return {NodeHandle::inner(a), deleted_bit};
                 }
             }
@@ -687,19 +675,24 @@ namespace ads {
             Leaf *b = a->left.cast().second;
             Leaf *c = a->right.cast().second;
             assert(b && c);
-            assert(b->size() == Leaf::min_num_bits);
-            assert(c->size() == Leaf::min_num_bits);
 
-            if constexpr (Leaf::min_num_bits % Leaf::block_width == 0) {
-                // If the minimum number of bits aligns with block boundaries, we can copy whole blocks.
-                b->m_bits.concat_block_aligned(c->m_bits);
+            if (b->size() == Leaf::min_num_bits && c->size() == Leaf::min_num_bits) {
+                if constexpr (Leaf::min_num_bits % Leaf::block_width == 0) {
+                    // If the minimum number of bits aligns with block boundaries, we can copy whole blocks.
+                    b->m_bits.concat_block_aligned(c->m_bits);
+                } else {
+                    for (size_type j = 0; j < Leaf::min_num_bits; ++j) {
+                        [[maybe_unused]] auto overflow_ = b->push_back(c->access(j));
+                        assert(!overflow_);
+                    }
+                }
+                assert(b->size() == 2 * Leaf::min_num_bits);
             } else {
-                for (size_type j = 0; j < Leaf::min_num_bits; ++j) {
-                    [[maybe_unused]] auto overflow_ = b->push_back(c->access(j));
+                for (int i = 0; i < c->size(); ++i) {
+                    [[maybe_unused]] auto overflow_ = b->push_back(c->access(i));
                     assert(!overflow_);
                 }
             }
-            assert(b->size() == 2 * Leaf::min_num_bits);
             delete a;
             delete c;
 
