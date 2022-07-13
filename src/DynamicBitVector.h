@@ -347,9 +347,6 @@ namespace ads {
 
             // The height might have decreased by one.
             inner->height = std::max(height(inner->left), height(inner->right)) + 1;
-            if (inner->height <= 4) {
-                assert(std::get<0>(check_integrity(*inner)));
-            }
             return {NodeHandle::inner(balance(inner)), deleted_bit};
         }
 
@@ -1037,7 +1034,6 @@ namespace ads {
 
         NodeHandle m_root;
         size_type m_size;
-        std::vector<std::pair<Inner *, bool>> m_path;
     };
 }
 

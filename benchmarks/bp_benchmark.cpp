@@ -9,7 +9,6 @@ static void BM_ForwardSearch(benchmark::State& state) {
     using size_type = int32_t;
     constexpr size_type num_blocks = NumBlocks;
     std::uniform_int_distribution<BlockType> block_dist(std::numeric_limits<block_type>::min(), std::numeric_limits<block_type>::max());
-    std::array<block_type, num_blocks> bits{};
 
     using Leaf = typename ads::BP<block_type, num_blocks>::Leaf;
 

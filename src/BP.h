@@ -766,8 +766,7 @@ namespace ads {
                         std::tie(a->right, moved_bit) = remove_first_level(c, 0);
 
                         // Append moved bit to b. This will not overflow, as b has min_num_bits - 1 bits.
-                        [[maybe_unused]] auto [overflow_, high_bit_] = b_leaf->insert(b_leaf->size(), moved_bit);
-                        //                         [[maybe_unused]] auto overflow_ = b_leaf->push_back(moved_bit); !!!!!
+                        [[maybe_unused]] auto overflow_ = b_leaf->push_back(moved_bit);
                         assert(!overflow_);
 
                         a->left_ones -= deleted_bit;
